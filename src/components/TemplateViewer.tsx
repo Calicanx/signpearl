@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Download, Edit3, Share2, Copy, Eye } from 'lucide-react';
+import { X, Download, Edit3, Share2 } from 'lucide-react';
 import { Template } from '../types';
 
 interface TemplateViewerProps {

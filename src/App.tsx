@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { useAuth } from './hooks/useAuth';
 import Header from './components/Header';
 import LandingPage from './components/LandingPage';
 import SignIn from './components/SignIn';
@@ -7,44 +8,55 @@ import SignUp from './components/SignUp';
 import Dashboard from './components/Dashboard';
 import SigningPage from './components/SigningPage';
 import Footer from './components/Footer';
-import { Page, User } from './types';
+import { Page, AuthUser } from './types';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('landing');
-  const [user, setUser] = useState<User | null>(null);
+  const { user, loading, signIn, signUp, signOut } = useAuth();
+
+  useEffect(() => {
+    if (user && (currentPage === 'landing' || currentPage === 'signin' || currentPage === 'signup')) {
+      setCurrentPage('dashboard');
+    } else if (!user && currentPage === 'dashboard') {
+      setCurrentPage('landing');
+    }
+  }, [user, currentPage]);
 
   const handlePageChange = (page: Page) => {
     setCurrentPage(page);
   };
 
-  const handleSignIn = (email: string, password: string) => {
-    // Mock authentication
-    const mockUser: User = {
-      id: '1',
-      name: 'John Doe',
-      email: email,
-      avatar: undefined
-    };
-    setUser(mockUser);
-    setCurrentPage('dashboard');
+  const handleSignIn = async (email: string, password: string) => {
+    const { error } = await signIn(email, password);
+    if (!error) {
+      setCurrentPage('dashboard');
+    }
+    return { error };
   };
 
-  const handleSignUp = (name: string, email: string, password: string) => {
-    // Mock registration
-    const mockUser: User = {
-      id: '1',
-      name: name,
-      email: email,
-      avatar: undefined
-    };
-    setUser(mockUser);
-    setCurrentPage('dashboard');
+  const handleSignUp = async (name: string, email: string, password: string) => {
+    const { error } = await signUp(email, password, name);
+    if (!error) {
+      setCurrentPage('dashboard');
+    }
+    return { error };
   };
 
-  const handleSignOut = () => {
-    setUser(null);
+  const handleSignOut = async () => {
+    await signOut();
     setCurrentPage('landing');
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+          <p className="text-white">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   const renderCurrentPage = () => {
     switch (currentPage) {
@@ -65,17 +77,15 @@ function App() {
     <Router>
       <div className="min-h-screen bg-white">
         <Routes>
-          {/* Public signing route */}
           <Route path="/sign/:documentId/:recipientId" element={<SigningPage />} />
-          
-          {/* Main application routes */}
           <Route path="*" element={
             <div className="min-h-screen">
-              <Header 
-                currentPage={currentPage} 
+              <Header
+                currentPage={currentPage}
                 onPageChange={handlePageChange}
                 isAuthenticated={!!user}
-                user={user || undefined}
+                user={user}
+                onSignOut={handleSignOut}
               />
               {renderCurrentPage()}
               {currentPage === 'landing' && <Footer />}

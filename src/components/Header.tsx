@@ -1,14 +1,16 @@
 import React from 'react';
 import { FileText, Menu, X } from 'lucide-react';
+import { Page, AuthUser } from '../types'; // Import Page and AuthUser types
 
 interface HeaderProps {
-  currentPage: string;
-  onPageChange: (page: string) => void;
+  currentPage: Page; // Updated to use Page type
+  onPageChange: (page: Page) => void; // Updated to use Page type
   isAuthenticated: boolean;
-  user?: { name: string; email: string };
+  user?: AuthUser | null;
+  onSignOut?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ currentPage, onPageChange, isAuthenticated, user }) => {
+const Header: React.FC<HeaderProps> = ({ onPageChange, isAuthenticated, user, onSignOut }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
   return (
@@ -55,7 +57,17 @@ const Header: React.FC<HeaderProps> = ({ currentPage, onPageChange, isAuthentica
                   <div className="w-8 h-8 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white font-medium border border-white/30">
                     {user?.name?.charAt(0)}
                   </div>
-                  <span className="text-white">{user?.name}</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-white">{user?.name}</span>
+                    {onSignOut && (
+                      <button
+                        onClick={onSignOut}
+                        className="text-white/80 hover:text-white text-sm transition-colors"
+                      >
+                        Sign Out
+                      </button>
+                    )}
+                  </div>
                 </div>
               </>
             )}
@@ -101,7 +113,17 @@ const Header: React.FC<HeaderProps> = ({ currentPage, onPageChange, isAuthentica
                     <div className="w-8 h-8 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white font-medium border border-white/30">
                       {user?.name?.charAt(0)}
                     </div>
-                    <span className="text-white">{user?.name}</span>
+                    <div className="flex flex-col">
+                      <span className="text-white">{user?.name}</span>
+                      {onSignOut && (
+                        <button
+                          onClick={onSignOut}
+                          className="text-white/80 hover:text-white text-sm text-left transition-colors"
+                        >
+                          Sign Out
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </>
               )}

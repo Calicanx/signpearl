@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Mail, Lock, User, Eye, EyeOff, Building } from 'lucide-react';
+import { Page } from '../types'; // Import Page type
 
 interface SignUpProps {
-  onPageChange: (page: string) => void;
-  onSignUp: (name: string, email: string, password: string) => void;
+  onPageChange: (page: Page) => void; // Updated to use Page type
+  onSignUp: (name: string, email: string, password: string) => Promise<{ error: any }>;
 }
 
 const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
@@ -17,21 +18,25 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (formData.password !== formData.confirmPassword) {
-      alert('Passwords do not match');
+      setError('Passwords do not match');
       return;
     }
     
     setIsLoading(true);
+    setError(null);
     
-    // Simulate API call
-    setTimeout(() => {
-      onSignUp(formData.name, formData.email, formData.password);
-      setIsLoading(false);
-    }, 1000);
+    const { error } = await onSignUp(formData.name, formData.email, formData.password);
+    
+    if (error) {
+      setError(error.message || 'An error occurred during sign up');
+    }
+    
+    setIsLoading(false);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,6 +56,12 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
 
         <div className="bg-white/10 backdrop-blur-md p-8 rounded-xl shadow-lg border border-white/20">
           <form className="space-y-6" onSubmit={handleSubmit}>
+            {error && (
+              <div className="bg-red-500/20 border border-red-500/30 text-red-100 px-4 py-3 rounded-lg">
+                {error}
+              </div>
+            )}
+
             <div>
               <label htmlFor="name" className="block text-sm font-medium text-white mb-2">
                 Full name

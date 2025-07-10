@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Page } from '../types'; // Import Page type
 
 interface SignInProps {
-  onPageChange: (page: string) => void;
-  onSignIn: (email: string, password: string) => void;
+  onPageChange: (page: Page) => void; // Updated to use Page type
+  onSignIn: (email: string, password: string) => Promise<{ error: any }>;
 }
 
 const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
@@ -13,16 +14,20 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setError(null);
     
-    // Simulate API call
-    setTimeout(() => {
-      onSignIn(formData.email, formData.password);
-      setIsLoading(false);
-    }, 1000);
+    const { error } = await onSignIn(formData.email, formData.password);
+    
+    if (error) {
+      setError(error.message || 'An error occurred during sign in');
+    }
+    
+    setIsLoading(false);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -42,6 +47,12 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
 
         <div className="bg-white/10 backdrop-blur-md p-8 rounded-xl shadow-lg border border-white/20">
           <form className="space-y-6" onSubmit={handleSubmit}>
+            {error && (
+              <div className="bg-red-500/20 border border-red-500/30 text-red-100 px-4 py-3 rounded-lg">
+                {error}
+              </div>
+            )}
+
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-white mb-2">
                 Email address

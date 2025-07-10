@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
+import { DocumentService } from '../services/DocumentService';
 import { FileText, Edit3, Calendar, Type, Check, X } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 
@@ -46,150 +47,95 @@ const SigningPage: React.FC = () => {
   const [textInput, setTextInput] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isCompleted, setIsCompleted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
   const signatureCanvasRef = useRef<SignatureCanvas>(null);
 
   useEffect(() => {
-    // Log access when page loads
-    logAccess('document_viewed');
-    
-    // Mock document data - in real app, fetch from API
-    const mockDocument: DocumentData = {
-      id: documentId || '1',
-      title: 'Service Agreement - ABC Corp',
-      content: `
-        <div class="p-8 bg-white min-h-[800px] font-serif">
-          <div class="text-center mb-8">
-            <h1 class="text-2xl font-bold mb-2">SERVICE AGREEMENT</h1>
-            <div class="w-24 h-0.5 bg-gray-400 mx-auto"></div>
-          </div>
-          
-          <div class="space-y-6">
-            <div class="grid grid-cols-2 gap-8">
-              <div>
-                <p class="font-semibold mb-2">Service Provider:</p>
-                <div class="border-b border-gray-400 pb-1 mb-4">
-                  <span class="bg-yellow-200 px-2 py-1 text-sm">ABC Corporation</span>
-                </div>
-              </div>
-              
-              <div>
-                <p class="font-semibold mb-2">Client:</p>
-                <div class="border-b border-gray-400 pb-1 mb-4">
-                  <span class="bg-blue-200 px-2 py-1 text-sm">John Smith</span>
-                </div>
-              </div>
-            </div>
-            
-            <div class="mt-8">
-              <p class="text-justify leading-relaxed">
-                This Service Agreement ("Agreement") is entered into on 
-                <span class="bg-green-200 px-1 mx-1">January 15, 2024</span> 
-                by and between ABC Corporation and John Smith for professional services.
-              </p>
-            </div>
-            
-            <div class="mt-8">
-              <h2 class="text-lg font-semibold mb-4">Terms and Conditions</h2>
-              <p class="text-justify leading-relaxed mb-4">
-                The service provider agrees to deliver professional consulting services as outlined in the attached scope of work. Payment terms are net 30 days from invoice date.
-              </p>
-              <p class="text-justify leading-relaxed">
-                This agreement shall remain in effect for a period of 12 months from the date of signing, unless terminated earlier by mutual consent of both parties.
-              </p>
-            </div>
-            
-            <div class="mt-12 grid grid-cols-2 gap-8">
-              <div class="text-center">
-                <div class="border-t border-gray-400 pt-2 mt-16">
-                  <p class="font-semibold">Service Provider</p>
-                  <div class="mt-8 h-16 border-2 border-dashed border-gray-300 flex items-center justify-center">
-                    <span class="text-gray-500 text-sm">Signature Required</span>
-                  </div>
-                  <p class="text-sm mt-2">Date: _______________</p>
-                </div>
-              </div>
-              
-              <div class="text-center">
-                <div class="border-t border-gray-400 pt-2 mt-16">
-                  <p class="font-semibold">Client</p>
-                  <div class="mt-8 h-16 border-2 border-dashed border-gray-300 flex items-center justify-center">
-                    <span class="text-gray-500 text-sm">Signature Required</span>
-                  </div>
-                  <p class="text-sm mt-2">Date: _______________</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      `,
-      fields: [
-        {
-          id: 'sig1',
-          x: 150,
-          y: 650,
-          width: 200,
-          height: 60,
-          page: 1,
-          type: 'signature',
-          label: 'Client Signature',
-          required: true
-        },
-        {
-          id: 'date1',
-          x: 150,
-          y: 720,
-          width: 150,
-          height: 30,
-          page: 1,
-          type: 'date',
-          label: 'Date',
-          required: true
-        },
-        {
-          id: 'name1',
-          x: 150,
-          y: 580,
-          width: 200,
-          height: 30,
-          page: 1,
-          type: 'text',
-          label: 'Print Name',
-          required: true
-        }
-      ],
-      recipient: {
-        id: recipientId || 'rec1',
-        name: 'John Smith',
-        email: 'john@example.com',
-        role: 'Signer'
-      }
-    };
-
-    setDocumentData(mockDocument);
-    setFields(mockDocument.fields);
-    setIsLoading(false);
+    loadDocumentData();
   }, [documentId, recipientId]);
 
-  const logAccess = (action: string) => {
-    const accessLog = {
-      documentId,
-      recipientId,
-      action,
-      timestamp: new Date().toISOString(),
-      ipAddress: '192.168.1.1', // In real app, get from server
-      userAgent: navigator.userAgent,
-      location: 'Unknown' // In real app, get from IP geolocation
-    };
+  const loadDocumentData = async () => {
+    if (!documentId || !recipientId) {
+      setError('Invalid document or recipient ID');
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      // Get document data using the recipient token
+      const result = await DocumentService.getDocumentForSigning(documentId, recipientId);
+      
+      if (!result) {
+        setError('Document not found or access token expired');
+        setIsLoading(false);
+        return;
+      }
+
+      const { document, recipient, fields: dbFields } = result;
+
+      // Convert database fields to component format
+      const convertedFields: SignatureField[] = dbFields.map(field => ({
+        id: field.id,
+        x: field.x_position,
+        y: field.y_position,
+        width: field.width,
+        height: field.height,
+        page: field.page_number,
+        type: field.field_type,
+        label: field.label,
+        required: field.required,
+        completed: false
+      }));
+
+      const docData: DocumentData = {
+        id: document.id,
+        title: document.title,
+        content: document.content || undefined,
+        fileUrl: document.file_url || undefined,
+        fields: convertedFields,
+        recipient: {
+          id: recipient.id,
+          name: recipient.name,
+          email: recipient.email,
+          role: recipient.role
+        }
+      };
+
+      setDocumentData(docData);
+      setFields(convertedFields);
+      
+      // Log access
+      await logAccess('document_viewed', recipient.id);
+      
+      // Update recipient status to viewed if it's still pending
+      if (recipient.status === 'pending') {
+        await DocumentService.updateRecipientStatus(recipient.id, 'viewed');
+      }
+      
+    } catch (error) {
+      console.error('Error loading document:', error);
+      setError('Failed to load document. Please check the link and try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const logAccess = async (action: string, recipientId?: string) => {
+    if (!documentId) return;
     
-    console.log('Access logged:', accessLog);
-    
-    // In a real application, send this to your backend
-    // fetch('/api/log-access', {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify(accessLog)
-    // });
+    try {
+      await DocumentService.logAccess({
+        document_id: documentId,
+        recipient_id: recipientId || null,
+        action,
+        ip_address: '127.0.0.1', // In real app, get from server
+        user_agent: navigator.userAgent,
+        location: 'Unknown' // In real app, get from IP geolocation
+      });
+    } catch (error) {
+      console.error('Error logging access:', error);
+    }
   };
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
@@ -242,7 +188,7 @@ const SigningPage: React.FC = () => {
     }
   };
 
-  const completeDocument = () => {
+  const completeDocument = async () => {
     const allRequiredFieldsCompleted = fields
       .filter(f => f.required)
       .every(f => f.completed);
@@ -252,14 +198,34 @@ const SigningPage: React.FC = () => {
       return;
     }
 
-    // Log completion
-    logAccess('document_signed');
-    
-    // In real app, submit to backend
-    console.log('Document completed with fields:', fields);
-    
-    setIsCompleted(true);
-    alert('Document signed successfully! Thank you.');
+    if (!documentData) return;
+
+    try {
+      // Save signatures to database
+      const signatureFields = fields.filter(f => f.type === 'signature' && f.value);
+      
+      for (const field of signatureFields) {
+        await DocumentService.saveSignature({
+          document_id: documentData.id,
+          recipient_id: documentData.recipient.id,
+          signature_data: field.value!,
+          ip_address: '127.0.0.1',
+          user_agent: navigator.userAgent,
+          location: 'Unknown'
+        });
+      }
+
+      // Update recipient status
+      await DocumentService.updateRecipientStatus(documentData.recipient.id, 'signed');
+      
+      // Log completion
+      await logAccess('document_signed', documentData.recipient.id);
+      
+      setIsCompleted(true);
+    } catch (error) {
+      console.error('Error completing document:', error);
+      alert('Error saving signature. Please try again.');
+    }
   };
 
   const currentPageFields = fields.filter(field => field.page === currentPage);
@@ -283,7 +249,7 @@ const SigningPage: React.FC = () => {
         <div className="text-center">
           <X className="w-16 h-16 text-red-500 mx-auto mb-4" />
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Document Not Found</h1>
-          <p className="text-gray-600">The document you're looking for doesn't exist or has expired.</p>
+          <p className="text-gray-600">{error || "The document you're looking for doesn't exist or has expired."}</p>
         </div>
       </div>
     );

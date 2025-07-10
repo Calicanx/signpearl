@@ -1,11 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { X, Save, Plus, Type, Edit3, MousePointer, Send, Mail, Users, Clock, UserPlus, Calendar, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
+import { DocumentService } from '../services/DocumentService';
+import { v4 as uuidv4 } from 'uuid';
+import { X, Save, Plus, Type, Edit3, MousePointer, Send, Mail, Users, UserPlus, Calendar, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
+import { PDFDocument } from 'pdf-lib';
 
-// Set up PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
+// Interface for signature fields placed on the document
 interface SignatureField {
   id: string;
   x: number;
@@ -16,9 +20,10 @@ interface SignatureField {
   type: 'signature' | 'text' | 'date';
   label: string;
   required: boolean;
-  assignedTo?: string;
+  assignedTo?: string | null;
 }
 
+// Interface for recipients who will receive the document
 interface Recipient {
   id: string;
   email: string;
@@ -26,6 +31,7 @@ interface Recipient {
   role: string;
 }
 
+// Interface for the DocumentEditor component props
 interface DocumentEditorProps {
   file?: File;
   templateContent?: string;
@@ -34,13 +40,16 @@ interface DocumentEditorProps {
   onSave: (fields: SignatureField[], documentData?: any) => void;
 }
 
-const DocumentEditor: React.FC<DocumentEditorProps> = ({ 
-  file, 
-  templateContent, 
-  templateName, 
-  onClose, 
-  onSave 
+// DocumentEditor component definition
+const DocumentEditor: React.FC<DocumentEditorProps> = ({
+  file,
+  templateContent,
+  templateName,
+  onClose,
+  onSave,
 }) => {
+  const { user } = useAuth();
+
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [signatureFields, setSignatureFields] = useState<SignatureField[]>([]);
@@ -59,24 +68,20 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   const [documentError, setDocumentError] = useState<string | null>(null);
   const [emailMessage, setEmailMessage] = useState('');
   const [sendingStep, setSendingStep] = useState<'compose' | 'sending' | 'sent'>('compose');
-  
+
   const pageRef = useRef<HTMLDivElement>(null);
   const signatureCanvasRef = useRef<SignatureCanvas>(null);
 
+  // Effect to handle file or template loading
   useEffect(() => {
     if (file) {
-      // Handle uploaded file
       const url = URL.createObjectURL(file);
       setFileUrl(url);
       setIsTemplate(false);
       setDocumentError(null);
       setDocumentLoaded(false);
-      
-      return () => {
-        URL.revokeObjectURL(url);
-      };
+      return () => URL.revokeObjectURL(url);
     } else if (templateContent) {
-      // Handle template
       setIsTemplate(true);
       setDocumentLoaded(true);
       setNumPages(1);
@@ -86,27 +91,29 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     }
   }, [file, templateContent]);
 
+  // Callback for successful PDF loading
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
     setDocumentLoaded(true);
     setDocumentError(null);
   };
 
+  // Callback for PDF loading errors
   const onDocumentLoadError = (error: Error) => {
     console.error('Error loading PDF:', error);
     setDocumentError('Failed to load PDF document. Please try uploading again.');
     setDocumentLoaded(false);
   };
 
+  // Handle clicks on the page to place new fields
   const handlePageClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (selectedTool === 'select' || !isAddingField) return;
-
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
 
     const newField: SignatureField = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: uuidv4(),
       x: Math.max(0, x - 50),
       y: Math.max(0, y - 15),
       width: selectedTool === 'signature' ? 150 : 100,
@@ -114,119 +121,186 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
       page: currentPage,
       type: selectedTool,
       label: `${selectedTool.charAt(0).toUpperCase() + selectedTool.slice(1)} Field`,
-      required: true
+      required: true,
+      assignedTo: null,
     };
 
-    setSignatureFields(prev => [...prev, newField]);
+    setSignatureFields((prev) => [...prev, newField]);
     setIsAddingField(false);
   };
 
+  // Handle mouse down on a field to start dragging
   const handleFieldMouseDown = (event: React.MouseEvent, fieldId: string) => {
     event.stopPropagation();
     setSelectedField(fieldId);
     setIsDragging(true);
-    
-    const field = signatureFields.find(f => f.id === fieldId);
+    const field = signatureFields.find((f) => f.id === fieldId);
     if (field) {
       const rect = event.currentTarget.getBoundingClientRect();
-      setDragOffset({
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top
-      });
+      setDragOffset({ x: event.clientX - rect.left, y: event.clientY - rect.top });
     }
   };
 
+  // Handle mouse movement for dragging fields
   const handleMouseMove = (event: React.MouseEvent) => {
     if (!isDragging || !selectedField || !pageRef.current) return;
-
     const pageRect = pageRef.current.getBoundingClientRect();
     const newX = event.clientX - pageRect.left - dragOffset.x;
     const newY = event.clientY - pageRect.top - dragOffset.y;
 
-    setSignatureFields(prev =>
-      prev.map(field =>
-        field.id === selectedField 
+    setSignatureFields((prev) =>
+      prev.map((field) =>
+        field.id === selectedField
           ? { ...field, x: Math.max(0, newX), y: Math.max(0, newY) }
           : field
       )
     );
   };
 
+  // Handle mouse up to stop dragging
   const handleMouseUp = () => {
     setIsDragging(false);
   };
 
+  // Delete a field from the document
   const handleFieldDelete = (fieldId: string) => {
-    setSignatureFields(prev => prev.filter(field => field.id !== fieldId));
+    setSignatureFields((prev) => prev.filter((field) => field.id !== fieldId));
     setSelectedField(null);
   };
 
-  const saveSignature = () => {
-    if (signatureCanvasRef.current) {
+  // Save the signature from the canvas
+  const saveSignature = async () => {
+    if (!user || !signatureCanvasRef.current) return;
+    try {
       const signatureData = signatureCanvasRef.current.toDataURL();
+      await DocumentService.saveSignature({
+        document_id: 'temp',
+        recipient_id: user.id,
+        signature_data: signatureData,
+        ip_address: '127.0.0.1',
+        user_agent: navigator.userAgent,
+        location: 'Unknown',
+      });
       console.log('Signature saved:', signatureData);
       setShowSignatureModal(false);
+    } catch (error) {
+      console.error('Error saving signature:', error);
+      alert('Error saving signature. Please try again.');
     }
   };
 
+  // Clear the signature canvas
   const clearSignature = () => {
     if (signatureCanvasRef.current) {
       signatureCanvasRef.current.clear();
     }
   };
 
-  const handleSave = () => {
-    const documentData = {
-      name: file?.name || templateName || 'Untitled Document',
-      type: isTemplate ? 'template' : 'upload',
-      content: templateContent,
-      fileUrl: fileUrl
-    };
-    onSave(signatureFields, documentData);
-  };
+  // Save the document and its fields to Supabase
+  const handleSave = async () => {
+    if (!user || !file) {
+      alert('You must be logged in and have a file to save the document.');
+      return;
+    }
 
-  const addRecipient = () => {
-    if (newRecipient.email && newRecipient.name) {
-      const recipient: Recipient = {
-        id: Math.random().toString(36).substr(2, 9),
-        ...newRecipient
-      };
-      setRecipients(prev => [...prev, recipient]);
-      setNewRecipient({ email: '', name: '', role: 'Signer' });
+    try {
+      // Step 1: Generate the edited PDF with fields
+      const originalPdfBytes = await fetch(fileUrl).then((res) => res.arrayBuffer());
+      const pdfDoc = await PDFDocument.load(originalPdfBytes);
+      const form = pdfDoc.getForm();
+
+      for (const field of signatureFields) {
+        const page = pdfDoc.getPage(field.page - 1);
+        const rect = [field.x, page.getHeight() - field.y - field.height, field.x + field.width, page.getHeight() - field.y];
+
+        if (field.type === 'signature') {
+          const signatureField = form.createSignature(field.label);
+          signatureField.setRectangle(rect);
+          page.addAnnotation(signatureField);
+        } else if (field.type === 'text') {
+          const textField = form.createTextField(field.label);
+          textField.setRectangle(rect);
+          page.addAnnotation(textField);
+        } else if (field.type === 'date') {
+          const dateField = form.createTextField(field.label);
+          dateField.setRectangle(rect);
+          page.addAnnotation(dateField);
+        }
+      }
+
+      const newPdfBytes = await pdfDoc.save();
+      const editedFile = new File([newPdfBytes], `${file.name || 'edited'}.pdf`, { type: 'application/pdf' });
+
+      // Step 2: Create the document record without file_url
+      const document = await DocumentService.createDocument({
+        title: file.name || templateName || 'Untitled Document',
+        owner_id: user.id,
+        status: 'draft',
+        content: templateContent,
+      });
+      const documentId = document.id;
+
+      // Step 3: Upload the edited PDF to Supabase Storage
+      const publicUrl = await DocumentService.uploadDocumentFile(documentId, editedFile);
+
+      // Step 4: Update the document record with file_url
+      await DocumentService.updateDocument(documentId, { file_url: publicUrl });
+
+      // Step 5: Save signature fields
+      if (signatureFields.length > 0) {
+        const fieldInserts = signatureFields.map((field) => ({
+          document_id: documentId,
+          field_type: field.type,
+          x_position: field.x,
+          y_position: field.y,
+          width: field.width,
+          height: field.height,
+          page_number: field.page,
+          label: field.label,
+          required: field.required,
+          assigned_to: field.assignedTo,
+        }));
+        await DocumentService.saveSignatureFields(fieldInserts);
+      }
+
+      console.log('Document saved successfully:', { id: documentId, name: document.title, file_url: publicUrl });
+      onSave(signatureFields, { id: documentId, name: document.title, file_url: publicUrl });
+    } catch (error) {
+      console.error('Error saving document:', error);
+      alert('Error saving document. Please try again.');
     }
   };
 
-  const removeRecipient = (id: string) => {
-    setRecipients(prev => prev.filter(r => r.id !== id));
-  };
-
+  // Generate a unique signing URL for a recipient
   const generateDocumentUrl = (documentId: string, recipientId: string) => {
     const baseUrl = window.location.origin;
-    return `${baseUrl}/sign/${documentId}/${recipientId}`;
+    const token = uuidv4();
+    return `${baseUrl}/sign/${documentId}/${recipientId}?token=${token}`;
   };
 
-  const logAccess = (documentId: string, recipientId: string, action: string) => {
-    const accessLog = {
-      documentId,
-      recipientId,
-      action,
-      timestamp: new Date().toISOString(),
-      ipAddress: '192.168.1.1', // In real app, get from server
-      userAgent: navigator.userAgent,
-      location: 'Unknown' // In real app, get from IP geolocation
-    };
-    
-    console.log('Access logged:', accessLog);
-    return accessLog;
+  // Log access events for the document
+  const logAccess = async (documentId: string, recipientId: string | null, action: string) => {
+    try {
+      await DocumentService.logAccess({
+        document_id: documentId,
+        recipient_id: recipientId,
+        action,
+        ip_address: '127.0.0.1',
+        user_agent: navigator.userAgent,
+        location: 'Unknown',
+      });
+    } catch (error) {
+      console.error('Error logging access:', error);
+      throw error; // Re-throw to handle in caller
+    }
   };
 
+  // Simulate sending emails to recipients with signing URLs
   const sendEmailToRecipients = async (documentId: string) => {
     const emailPromises = recipients.map(async (recipient) => {
       const signingUrl = generateDocumentUrl(documentId, recipient.id);
-      
-      // Log the email send action
-      logAccess(documentId, recipient.id, 'email_sent');
-      
+      await logAccess(documentId, recipient.id, 'email_sent');
+
       const emailData = {
         to: recipient.email,
         subject: `Document Signature Request - ${file?.name || templateName}`,
@@ -236,14 +310,11 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
               <h1 style="color: white; margin: 0; font-size: 28px;">SignPearl</h1>
               <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Document Signature Request</p>
             </div>
-            
             <div style="padding: 30px; background: white;">
               <h2 style="color: #333; margin-bottom: 20px;">Hello ${recipient.name},</h2>
-              
               <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
                 You have been requested to sign the document: <strong>${file?.name || templateName}</strong>
               </p>
-              
               <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
                 <h3 style="color: #333; margin-top: 0;">Document Details:</h3>
                 <ul style="color: #666; margin: 0; padding-left: 20px;">
@@ -253,19 +324,16 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   <li>Sent: ${new Date().toLocaleDateString()}</li>
                 </ul>
               </div>
-              
               <div style="text-align: center; margin: 30px 0;">
                 <a href="${signingUrl}" 
                    style="background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
                   Review & Sign Document
                 </a>
               </div>
-              
               <p style="color: #999; font-size: 14px; margin-top: 30px;">
                 This link is unique to you and will expire in 30 days. If you have any questions, please contact the sender.
               </p>
             </div>
-            
             <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #eee;">
               <p style="color: #999; margin: 0; font-size: 12px;">
                 Powered by SignPearl - Secure Digital Document Signing
@@ -277,57 +345,125 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
           documentId,
           recipientId: recipient.id,
           signingUrl,
-          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days
-        }
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        },
       };
-      
+
       console.log('Email would be sent:', emailData);
-      
-      // Simulate email sending
-      return new Promise(resolve => setTimeout(resolve, 500));
+      return new Promise((resolve) => setTimeout(resolve, 500));
     });
-    
+
     return Promise.all(emailPromises);
   };
 
+  // Handle sending the document to recipients
   const handleSendDocument = async () => {
+    if (!user) {
+      alert('You must be logged in to send a document.');
+      return;
+    }
     try {
       setSendingStep('sending');
-      
-      // Generate unique document ID
-      const documentId = Math.random().toString(36).substr(2, 9);
-      
-      // Log document creation
-      logAccess(documentId, 'system', 'document_created');
-      
-      // Send emails to all recipients
-      await sendEmailToRecipients(documentId);
-      
-      // Create document record with tracking URLs
-      const documentRecord = {
+      const documentId = uuidv4();
+
+      // Step 1: Create the document in the database with initial status
+      const document = await DocumentService.createDocument({
         id: documentId,
-        name: file?.name || templateName || 'Untitled Document',
-        fields: signatureFields,
-        recipients: recipients.map(recipient => ({
-          ...recipient,
-          signingUrl: generateDocumentUrl(documentId, recipient.id),
+        title: file?.name || templateName || 'Untitled Document',
+        owner_id: user.id,
+        status: 'preparing',
+        content: templateContent,
+      });
+
+      // Step 2: Log the access after document creation
+      await logAccess(documentId, null, 'document_created');
+
+      // Step 3: Generate and upload the edited PDF with fields
+      let publicUrl = fileUrl;
+      if (file) {
+        const originalPdfBytes = await fetch(fileUrl).then((res) => res.arrayBuffer());
+        const pdfDoc = await PDFDocument.load(originalPdfBytes);
+        const form = pdfDoc.getForm();
+
+        for (const field of signatureFields) {
+          const page = pdfDoc.getPage(field.page - 1);
+          const rect = [field.x, page.getHeight() - field.y - field.height, field.x + field.width, page.getHeight() - field.y];
+
+          if (field.type === 'signature') {
+            const signatureField = form.createSignature(field.label);
+            signatureField.setRectangle(rect);
+            page.addAnnotation(signatureField);
+          } else if (field.type === 'text') {
+            const textField = form.createTextField(field.label);
+            textField.setRectangle(rect);
+            page.addAnnotation(textField);
+          } else if (field.type === 'date') {
+            const dateField = form.createTextField(field.label);
+            dateField.setRectangle(rect);
+            page.addAnnotation(dateField);
+          }
+        }
+
+        const newPdfBytes = await pdfDoc.save();
+        const editedFile = new File([newPdfBytes], `${file.name || 'edited'}.pdf`, { type: 'application/pdf' });
+        publicUrl = await DocumentService.uploadDocumentFile(documentId, editedFile);
+      }
+
+      // Step 4: Update the document with file_url
+      await DocumentService.updateDocument(documentId, { file_url: publicUrl });
+
+      // Step 5: Save signature fields
+      if (signatureFields.length > 0) {
+        const fieldInserts = signatureFields.map((field) => ({
+          document_id: documentId,
+          field_type: field.type,
+          x_position: field.x,
+          y_position: field.y,
+          width: field.width,
+          height: field.height,
+          page_number: field.page,
+          label: field.label,
+          required: field.required,
+          assigned_to: field.assignedTo,
+        }));
+        await DocumentService.saveSignatureFields(fieldInserts);
+      }
+
+      // Step 6: Add recipients to the document
+      if (recipients.length > 0) {
+        const recipientInserts = recipients.map((recipient) => ({
+          id: recipient.id,
+          document_id: documentId,
+          email: recipient.email,
+          name: recipient.name,
+          role: recipient.role,
           status: 'pending',
-          sentAt: new Date().toISOString()
-        })),
-        createdAt: new Date().toISOString(),
-        status: 'sent'
-      };
-      
-      console.log('Document sent successfully:', documentRecord);
-      
+          signing_url_token: uuidv4(),
+          token_expiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        }));
+        await DocumentService.addRecipients(recipientInserts);
+        await sendEmailToRecipients(documentId);
+      }
+
+      // Step 7: Update document status to 'sent'
+      await DocumentService.updateDocument(documentId, { status: 'sent' });
+
       setSendingStep('sent');
-      
       setTimeout(() => {
         setShowSendModal(false);
         setSendingStep('compose');
-        onSave(signatureFields, documentRecord);
+        onSave(signatureFields, {
+          id: documentId,
+          name: document.title,
+          file_url: publicUrl,
+          recipients: recipients.map((r) => ({
+            ...r,
+            signingUrl: generateDocumentUrl(documentId, r.id),
+            status: 'pending',
+            sentAt: new Date().toISOString(),
+          })),
+        });
       }, 2000);
-      
     } catch (error) {
       console.error('Error sending document:', error);
       alert('Error sending document. Please try again.');
@@ -335,26 +471,35 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     }
   };
 
-  const currentPageFields = signatureFields.filter(field => field.page === currentPage);
+  // Add a new recipient to the list
+  const addRecipient = () => {
+    if (newRecipient.email && newRecipient.name) {
+      const recipient: Recipient = { id: uuidv4(), ...newRecipient };
+      setRecipients((prev) => [...prev, recipient]);
+      setNewRecipient({ email: '', name: '', role: 'Signer' });
+    }
+  };
+
+  // Remove a recipient from the list
+  const removeRecipient = (id: string) => {
+    setRecipients((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  // Filter fields for the current page
+  const currentPageFields = signatureFields.filter((field) => field.page === currentPage);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl mx-4 max-h-[95vh] overflow-hidden flex">
-        {/* Sidebar */}
         <div className="w-80 bg-gray-50 border-r border-gray-200 flex flex-col">
           <div className="p-6 border-b border-gray-200">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900">Document Editor</h2>
-              <button
-                onClick={onClose}
-                className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
-              >
+              <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-lg transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <p className="text-sm text-gray-600">
-              {file?.name || templateName || 'Template Document'}
-            </p>
+            <p className="text-sm text-gray-600">{file?.name || templateName || 'Template Document'}</p>
             {isTemplate && (
               <span className="inline-block mt-2 px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded-full">
                 Template
@@ -362,7 +507,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
             )}
           </div>
 
-          {/* Tools */}
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-sm font-semibold text-gray-900 mb-3">Tools</h3>
             <div className="space-y-2">
@@ -417,27 +561,20 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
             </div>
             {isAddingField && (
               <div className="mt-3 p-3 bg-blue-50 rounded-lg">
-                <p className="text-xs text-blue-700">
-                  Click on the document to place a {selectedTool} field
-                </p>
+                <p className="text-xs text-blue-700">Click on the document to place a {selectedTool} field</p>
               </div>
             )}
           </div>
 
-          {/* Fields List */}
           <div className="flex-1 p-6 overflow-y-auto">
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">
-              Fields ({signatureFields.length})
-            </h3>
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">Fields ({signatureFields.length})</h3>
             <div className="space-y-2">
               {signatureFields.map((field) => (
                 <div
                   key={field.id}
                   onClick={() => setSelectedField(field.id)}
                   className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                    selectedField === field.id
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:bg-gray-100'
+                    selectedField === field.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-100'
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -462,7 +599,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
             </div>
           </div>
 
-          {/* Actions */}
           <div className="p-6 border-t border-gray-200">
             <div className="space-y-3">
               <button
@@ -490,9 +626,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
           </div>
         </div>
 
-        {/* Document Viewer */}
         <div className="flex-1 flex flex-col">
-          {/* Page Navigation - Only show for PDFs with multiple pages */}
           {!isTemplate && numPages > 1 && (
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
               <div className="flex items-center space-x-4">
@@ -515,13 +649,11 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                 </button>
               </div>
               <div className="text-sm text-gray-600">
-                {selectedTool === 'select' ? 'Select and drag fields to move them' : 
-                 isAddingField ? `Click to place ${selectedTool} field` : ''}
+                {selectedTool === 'select' ? 'Select and drag fields to move them' : isAddingField ? `Click to place ${selectedTool} field` : ''}
               </div>
             </div>
           )}
 
-          {/* Document Content */}
           <div className="flex-1 overflow-auto bg-gray-100 p-8">
             <div className="max-w-4xl mx-auto">
               <div
@@ -541,13 +673,8 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                     </div>
                   </div>
                 ) : isTemplate ? (
-                  // Render template content
-                  <div 
-                    className="min-h-[800px] p-8"
-                    dangerouslySetInnerHTML={{ __html: templateContent || '' }}
-                  />
+                  <div className="min-h-[800px] p-8" dangerouslySetInnerHTML={{ __html: templateContent || '' }} />
                 ) : file && fileUrl ? (
-                  // Render PDF
                   <Document
                     file={fileUrl}
                     onLoadSuccess={onDocumentLoadSuccess}
@@ -584,35 +711,27 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   </div>
                 )}
 
-                {/* Signature Fields Overlay */}
-                {documentLoaded && currentPageFields.map((field) => (
-                  <div
-                    key={field.id}
-                    onMouseDown={(e) => handleFieldMouseDown(e, field.id)}
-                    className={`absolute border-2 border-dashed cursor-move flex items-center justify-center text-xs font-medium select-none ${
-                      selectedField === field.id
-                        ? 'border-blue-500 bg-blue-100 text-blue-700'
-                        : 'border-gray-400 bg-gray-100 text-gray-600'
-                    }`}
-                    style={{
-                      left: field.x,
-                      top: field.y,
-                      width: field.width,
-                      height: field.height,
-                    }}
-                  >
-                    {field.type === 'signature' && 'Signature'}
-                    {field.type === 'text' && 'Text'}
-                    {field.type === 'date' && 'Date'}
-                  </div>
-                ))}
+                {documentLoaded &&
+                  currentPageFields.map((field) => (
+                    <div
+                      key={field.id}
+                      onMouseDown={(e) => handleFieldMouseDown(e, field.id)}
+                      className={`absolute border-2 border-dashed cursor-move flex items-center justify-center text-xs font-medium select-none ${
+                        selectedField === field.id ? 'border-blue-500 bg-blue-100 text-blue-700' : 'border-gray-400 bg-gray-100 text-gray-600'
+                      }`}
+                      style={{ left: field.x, top: field.y, width: field.width, height: field.height }}
+                    >
+                      {field.type === 'signature' && 'Signature'}
+                      {field.type === 'text' && 'Text'}
+                      {field.type === 'date' && 'Date'}
+                    </div>
+                  ))}
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Signature Modal */}
       {showSignatureModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4">
@@ -623,18 +742,11 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
               <div className="border border-gray-300 rounded-lg">
                 <SignatureCanvas
                   ref={signatureCanvasRef}
-                  canvasProps={{
-                    width: 600,
-                    height: 200,
-                    className: 'signature-canvas w-full'
-                  }}
+                  canvasProps={{ width: 600, height: 200, className: 'signature-canvas w-full' }}
                 />
               </div>
               <div className="flex justify-between mt-4">
-                <button
-                  onClick={clearSignature}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
+                <button onClick={clearSignature} className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
                   Clear
                 </button>
                 <div className="space-x-3">
@@ -644,10 +756,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   >
                     Cancel
                   </button>
-                  <button
-                    onClick={saveSignature}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                  >
+                  <button onClick={saveSignature} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
                     Save Signature
                   </button>
                 </div>
@@ -657,11 +766,9 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         </div>
       )}
 
-      {/* Send Document Modal */}
       {showSendModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 max-h-[90vh] overflow-hidden">
-            {/* Header */}
             <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-6 text-white">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
@@ -673,10 +780,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                     <p className="text-blue-100 text-sm">Share your document with recipients</p>
                   </div>
                 </div>
-                <button
-                  onClick={() => setShowSendModal(false)}
-                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-                >
+                <button onClick={() => setShowSendModal(false)} className="p-2 hover:bg-white/20 rounded-lg transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -684,7 +788,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
 
             {sendingStep === 'compose' && (
               <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-                {/* Document Info Card */}
                 <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-xl mb-6 border border-blue-200">
                   <div className="flex items-start space-x-4">
                     <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center">
@@ -714,33 +817,31 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   </div>
                 </div>
 
-                {/* Add Recipients Section */}
                 <div className="mb-6">
                   <div className="flex items-center space-x-2 mb-4">
                     <UserPlus className="w-5 h-5 text-blue-600" />
                     <h4 className="font-semibold text-gray-900">Add Recipients</h4>
                   </div>
-                  
                   <div className="bg-gray-50 p-4 rounded-xl">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                       <input
                         type="text"
                         placeholder="Full Name"
                         value={newRecipient.name}
-                        onChange={(e) => setNewRecipient(prev => ({ ...prev, name: e.target.value }))}
+                        onChange={(e) => setNewRecipient((prev) => ({ ...prev, name: e.target.value }))}
                         className="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                       <input
                         type="email"
                         placeholder="Email Address"
                         value={newRecipient.email}
-                        onChange={(e) => setNewRecipient(prev => ({ ...prev, email: e.target.value }))}
+                        onChange={(e) => setNewRecipient((prev) => ({ ...prev, email: e.target.value }))}
                         className="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                       <div className="flex space-x-2">
                         <select
                           value={newRecipient.role}
-                          onChange={(e) => setNewRecipient(prev => ({ ...prev, role: e.target.value }))}
+                          onChange={(e) => setNewRecipient((prev) => ({ ...prev, role: e.target.value }))}
                           className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         >
                           <option value="Signer">Signer</option>
@@ -759,7 +860,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   </div>
                 </div>
 
-                {/* Recipients List */}
                 {recipients.length > 0 && (
                   <div className="mb-6">
                     <div className="flex items-center justify-between mb-4">
@@ -768,7 +868,10 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                     </div>
                     <div className="space-y-3">
                       {recipients.map((recipient) => (
-                        <div key={recipient.id} className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-xl hover:shadow-sm transition-shadow">
+                        <div
+                          key={recipient.id}
+                          className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-xl hover:shadow-sm transition-shadow"
+                        >
                           <div className="flex items-center space-x-3">
                             <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-medium">
                               {recipient.name.charAt(0).toUpperCase()}
@@ -795,7 +898,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   </div>
                 )}
 
-                {/* Message Section */}
                 <div className="mb-6">
                   <div className="flex items-center space-x-2 mb-4">
                     <Mail className="w-5 h-5 text-blue-600" />
@@ -811,7 +913,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   />
                 </div>
 
-                {/* Warning if no recipients */}
                 {recipients.length === 0 && (
                   <div className="flex items-center space-x-3 p-4 bg-amber-50 border border-amber-200 rounded-xl mb-6">
                     <AlertCircle className="w-5 h-5 text-amber-600" />
@@ -841,7 +942,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
               </div>
             )}
 
-            {/* Footer */}
             {sendingStep === 'compose' && (
               <div className="p-6 border-t border-gray-200 bg-gray-50">
                 <div className="flex justify-between items-center">
@@ -849,7 +949,9 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                     {recipients.length > 0 ? (
                       <span className="flex items-center space-x-1">
                         <CheckCircle2 className="w-4 h-4 text-green-600" />
-                        <span>Ready to send to {recipients.length} recipient{recipients.length !== 1 ? 's' : ''}</span>
+                        <span>
+                          Ready to send to {recipients.length} recipient{recipients.length !== 1 ? 's' : ''}
+                        </span>
                       </span>
                     ) : (
                       <span className="flex items-center space-x-1">

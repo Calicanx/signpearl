@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { DocumentService } from '../services/DocumentService';
 import { 
   Plus, 
   Search, 
   Filter, 
   FileText, 
-  Clock, 
   CheckCircle, 
   AlertCircle, 
   Users, 
@@ -12,21 +12,21 @@ import {
   MoreHorizontal,
   Eye,
   Edit3,
-  Trash2,
   Upload,
   Send,
   Mail
 } from 'lucide-react';
-import { Document, Template } from '../types';
+import { Template } from '../types';
 import DocumentUpload from './DocumentUpload';
 import DocumentEditor from './DocumentEditor';
 import TemplateViewer from './TemplateViewer';
 
+// Define the props interface for the Dashboard component
 interface DashboardProps {
-  user: { name: string; email: string };
-  onPageChange: (page: string) => void;
+  user: { id: string; name: string; email: string };
 }
 
+// Interface for uploaded files
 interface UploadedFile {
   id: string;
   file: File;
@@ -36,6 +36,7 @@ interface UploadedFile {
   uploadedAt: Date;
 }
 
+// Interface for sent documents, including recipient details and access logs
 interface SentDocument {
   id: string;
   title: string;
@@ -57,15 +58,18 @@ interface SentDocument {
   }>;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
+const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [activeTab, setActiveTab] = useState('documents');
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDocumentEditor, setShowDocumentEditor] = useState(false);
   const [showTemplateViewer, setShowTemplateViewer] = useState(false);
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
-  const [sentDocuments, setSentDocuments] = useState<SentDocument[]>([
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [sentDocuments] = useState<SentDocument[]>([
     {
       id: '1',
       title: 'Service Agreement - ABC Corp',
@@ -79,27 +83,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
           signedAt: '2024-01-16',
           signingUrl: '/sign/1/rec1',
           accessLogs: [
-            {
-              action: 'email_sent',
-              timestamp: '2024-01-15T10:00:00Z',
-              ipAddress: '192.168.1.100',
-              userAgent: 'Mozilla/5.0...',
-              location: 'New York, US'
-            },
-            {
-              action: 'document_viewed',
-              timestamp: '2024-01-15T14:30:00Z',
-              ipAddress: '192.168.1.100',
-              userAgent: 'Mozilla/5.0...',
-              location: 'New York, US'
-            },
-            {
-              action: 'document_signed',
-              timestamp: '2024-01-16T09:15:00Z',
-              ipAddress: '192.168.1.100',
-              userAgent: 'Mozilla/5.0...',
-              location: 'New York, US'
-            }
+            { action: 'email_sent', timestamp: '2024-01-15T10:00:00Z', ipAddress: '192.168.1.100', userAgent: 'Mozilla/5.0...', location: 'New York, US' },
+            { action: 'document_viewed', timestamp: '2024-01-15T14:30:00Z', ipAddress: '192.168.1.100', userAgent: 'Mozilla/5.0...', location: 'New York, US' },
+            { action: 'document_signed', timestamp: '2024-01-16T09:15:00Z', ipAddress: '192.168.1.100', userAgent: 'Mozilla/5.0...', location: 'New York, US' }
           ]
         },
         { 
@@ -108,13 +94,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
           status: 'pending',
           signingUrl: '/sign/1/rec2',
           accessLogs: [
-            {
-              action: 'email_sent',
-              timestamp: '2024-01-15T10:00:00Z',
-              ipAddress: '192.168.1.101',
-              userAgent: 'Mozilla/5.0...',
-              location: 'New York, US'
-            }
+            { action: 'email_sent', timestamp: '2024-01-15T10:00:00Z', ipAddress: '192.168.1.101', userAgent: 'Mozilla/5.0...', location: 'New York, US' }
           ]
         }
       ]
@@ -132,189 +112,125 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
           signedAt: '2024-01-15',
           signingUrl: '/sign/2/rec3',
           accessLogs: [
-            {
-              action: 'email_sent',
-              timestamp: '2024-01-14T15:00:00Z',
-              ipAddress: '10.0.0.50',
-              userAgent: 'Mozilla/5.0...',
-              location: 'San Francisco, US'
-            },
-            {
-              action: 'document_viewed',
-              timestamp: '2024-01-14T16:45:00Z',
-              ipAddress: '10.0.0.50',
-              userAgent: 'Mozilla/5.0...',
-              location: 'San Francisco, US'
-            },
-            {
-              action: 'document_signed',
-              timestamp: '2024-01-15T08:30:00Z',
-              ipAddress: '10.0.0.50',
-              userAgent: 'Mozilla/5.0...',
-              location: 'San Francisco, US'
-            }
+            { action: 'email_sent', timestamp: '2024-01-14T15:00:00Z', ipAddress: '10.0.0.50', userAgent: 'Mozilla/5.0...', location: 'San Francisco, US' },
+            { action: 'document_viewed', timestamp: '2024-01-14T16:45:00Z', ipAddress: '10.0.0.50', userAgent: 'Mozilla/5.0...', location: 'San Francisco, US' },
+            { action: 'document_signed', timestamp: '2024-01-15T08:30:00Z', ipAddress: '10.0.0.50', userAgent: 'Mozilla/5.0...', location: 'San Francisco, US' }
           ]
         }
       ]
     }
   ]);
 
-  // Mock data
-  const documents: Document[] = [
-    {
-      id: '1',
-      title: 'Service Agreement - ABC Corp',
-      status: 'pending',
-      createdAt: '2024-01-15',
-      recipients: ['john@abccorp.com', 'jane@abccorp.com'],
-    },
-    {
-      id: '2',
-      title: 'NDA - Tech Startup',
-      status: 'signed',
-      createdAt: '2024-01-14',
-      recipients: ['founder@techstartup.com'],
-    },
-    {
-      id: '3',
-      title: 'Employment Contract - Sarah Johnson',
-      status: 'completed',
-      createdAt: '2024-01-13',
-      recipients: ['sarah.johnson@company.com'],
-    },
-    {
-      id: '4',
-      title: 'Partnership Agreement - XYZ LLC',
-      status: 'draft',
-      createdAt: '2024-01-12',
-      recipients: ['contact@xyzllc.com'],
-    },
-  ];
+  // Effect to load documents when the component mounts or user.id changes
+  useEffect(() => {
+    loadDocuments();
+  }, [user.id]);
 
+  // Function to fetch documents from DocumentService
+  const loadDocuments = async () => {
+    try {
+      setLoading(true);
+      const docs = await DocumentService.getDocumentsWithDetails(user.id);
+      setDocuments(docs);
+    } catch (error) {
+      console.error('Error loading documents:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Function to handle document download
+  const handleDownload = (url: string, filename: string) => {
+    const link = document.createElement('a'); // Create a temporary anchor element
+    link.href = url; // Set the document URL
+    link.download = filename; // Set the filename for download
+    document.body.appendChild(link);
+    link.click(); // Trigger the download
+    document.body.removeChild(link); // Clean up
+  };
+
+  // Mock template data
   const templates: Template[] = [
-    {
-      id: '1',
-      name: 'Non-Disclosure Agreement',
-      category: 'Legal',
-      description: 'Standard NDA template for confidential information',
-      usage: 145,
-    },
-    {
-      id: '2',
-      name: 'Service Agreement',
-      category: 'Business',
-      description: 'Professional services contract template',
-      usage: 89,
-    },
-    {
-      id: '3',
-      name: 'Employment Contract',
-      category: 'HR',
-      description: 'Full-time employment agreement template',
-      usage: 67,
-    },
-    {
-      id: '4',
-      name: 'Partnership Agreement',
-      category: 'Business',
-      description: 'Business partnership contract template',
-      usage: 34,
-    },
+    { id: '1', name: 'Non-Disclosure Agreement', category: 'Legal', description: 'Standard NDA template for confidential information', usage: 145 },
+    { id: '2', name: 'Service Agreement', category: 'Business', description: 'Professional services contract template', usage: 89 },
+    { id: '3', name: 'Employment Contract', category: 'HR', description: 'Full-time employment agreement template', usage: 67 },
+    { id: '4', name: 'Partnership Agreement', category: 'Business', description: 'Business partnership contract template', usage: 34 },
   ];
 
+  // Function to determine status color based on document status
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'completed':
-        return 'bg-green-100 text-green-800';
-      case 'signed':
-        return 'bg-blue-100 text-blue-800';
+      case 'completed': return 'bg-green-100 text-green-800';
+      case 'signed': return 'bg-blue-100 text-blue-800';
       case 'pending':
-      case 'sent':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'viewed':
-        return 'bg-purple-100 text-purple-800';
-      case 'draft':
-        return 'bg-gray-100 text-gray-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
+      case 'sent': return 'bg-yellow-100 text-yellow-800';
+      case 'viewed': return 'bg-purple-100 text-purple-800';
+      case 'draft': return 'bg-gray-100 text-gray-800';
+      default: return 'bg-gray-100 text-gray-800';
     }
   };
 
+  // Function to determine status icon based on document status
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'completed':
-        return <CheckCircle className="w-4 h-4" />;
-      case 'signed':
-        return <CheckCircle className="w-4 h-4" />;
+      case 'completed': return <CheckCircle className="w-4 h-4" />;
+      case 'signed': return <CheckCircle className="w-4 h-4" />;
       case 'pending':
-      case 'sent':
-        return <Clock className="w-4 h-4" />;
-      case 'viewed':
-        return <Eye className="w-4 h-4" />;
-      case 'draft':
-        return <Edit3 className="w-4 h-4" />;
-      default:
-        return <AlertCircle className="w-4 h-4" />;
+      case 'sent': return <AlertCircle className="w-4 h-4" />;
+      case 'viewed': return <Eye className="w-4 h-4" />;
+      case 'draft': return <Edit3 className="w-4 h-4" />;
+      default: return <AlertCircle className="w-4 h-4" />;
     }
   };
 
-  const filteredDocuments = documents.filter(doc =>
-    doc.title.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
+  // Filter templates based on search term
   const filteredTemplates = templates.filter(template =>
     template.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // Filter sent documents based on search term
   const filteredSentDocuments = sentDocuments.filter(doc =>
     doc.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // Handle file selection from upload modal
   const handleFileSelect = (file: UploadedFile) => {
     setSelectedFile(file);
     setShowUploadModal(false);
-    // Go directly to document editor
     setShowDocumentEditor(true);
   };
 
+  // Handle template viewing
   const handleTemplateView = (template: Template) => {
     setSelectedTemplate(template);
     setShowTemplateViewer(true);
   };
 
+  // Handle template usage (opens editor with template content)
   const handleTemplateUse = (template: Template) => {
     setSelectedTemplate(template);
     setShowTemplateViewer(false);
     setShowDocumentEditor(true);
   };
 
+  // Handle document save and refresh document list
   const handleDocumentSave = (fields: any[], documentData?: any) => {
     console.log('Saving document with fields:', fields);
     console.log('Document data:', documentData);
-    
-    // Add to sent documents if it was sent
-    if (documentData && documentData.recipients) {
-      const newSentDoc: SentDocument = {
-        id: documentData.id,
-        title: documentData.name,
-        status: 'sent',
-        sentAt: new Date().toISOString().split('T')[0],
-        recipients: documentData.recipients
-      };
-      setSentDocuments(prev => [newSentDoc, ...prev]);
-    }
-    
+    loadDocuments();
     setShowDocumentEditor(false);
     setSelectedFile(null);
     setSelectedTemplate(null);
   };
 
+  // Summarize recipient status for sent documents
   const getRecipientStatusSummary = (recipients: SentDocument['recipients']) => {
     const signed = recipients.filter(r => r.status === 'signed').length;
     const total = recipients.length;
     return `${signed}/${total} signed`;
   };
 
+  // Copy signing URL to clipboard
   const copySigningUrl = (url: string) => {
     const fullUrl = `${window.location.origin}${url}`;
     navigator.clipboard.writeText(fullUrl);
@@ -323,7 +239,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Dashboard Header */}
+      {/* Header section with gradient background */}
       <div className="bg-gradient-to-r from-blue-900 via-purple-900 to-indigo-900 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-6">
@@ -333,6 +249,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                 <p className="text-blue-100">Welcome back, {user.name}</p>
               </div>
               <div className="flex space-x-3">
+                {/* Button to open upload modal */}
                 <button 
                   onClick={() => setShowUploadModal(true)}
                   className="bg-white/20 backdrop-blur-sm text-white px-6 py-3 rounded-lg hover:bg-white/30 transition-colors flex items-center space-x-2 border border-white/30"
@@ -340,6 +257,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                   <Upload className="w-5 h-5" />
                   <span>Upload Document</span>
                 </button>
+                {/* Button to create new document (placeholder) */}
                 <button className="bg-white/20 backdrop-blur-sm text-white px-6 py-3 rounded-lg hover:bg-white/30 transition-colors flex items-center space-x-2 border border-white/30">
                   <Plus className="w-5 h-5" />
                   <span>New Document</span>
@@ -350,8 +268,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
         </div>
       </div>
 
-      {/* Stats Cards */}
+      {/* Main content area */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Summary cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="bg-white p-6 rounded-lg shadow-sm">
             <div className="flex items-center">
@@ -399,44 +318,33 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
           </div>
         </div>
 
-        {/* Tab Navigation */}
+        {/* Tabbed content area */}
         <div className="bg-white rounded-lg shadow-sm mb-6">
+          {/* Navigation tabs */}
           <div className="border-b border-gray-200">
             <nav className="flex space-x-8 px-6">
               <button
                 onClick={() => setActiveTab('documents')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'documents'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'documents' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
               >
                 Documents
               </button>
               <button
                 onClick={() => setActiveTab('sent')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'sent'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'sent' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
               >
                 Sent for Signature
               </button>
               <button
                 onClick={() => setActiveTab('templates')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'templates'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'templates' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
               >
                 Templates
               </button>
             </nav>
           </div>
 
-          {/* Search and Filter */}
+          {/* Search and filter bar */}
           <div className="p-6 border-b border-gray-200">
             <div className="flex items-center space-x-4">
               <div className="relative flex-1 max-w-md">
@@ -456,44 +364,113 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
             </div>
           </div>
 
-          {/* Content */}
+          {/* Tab content */}
           <div className="p-6">
             {activeTab === 'documents' ? (
-              <div className="space-y-4">
-                {filteredDocuments.map((doc) => (
-                  <div key={doc.id} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                    <div className="flex items-center space-x-4">
-                      <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                        <FileText className="w-5 h-5 text-blue-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-gray-900">{doc.title}</h3>
-                        <p className="text-sm text-gray-600">
-                          {doc.recipients.length} recipient{doc.recipients.length !== 1 ? 's' : ''} • {doc.createdAt}
-                        </p>
-                      </div>
+              loading ? (
+                // Display loading spinner while documents are being fetched
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {documents.length === 0 ? (
+                    // Display empty state if no documents are available
+                    <div className="text-center py-12">
+                      <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">No documents yet</h3>
+                      <p className="text-gray-600 mb-4">Get started by uploading your first document</p>
+                      <button
+                        onClick={() => setShowUploadModal(true)}
+                        className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Upload Document
+                      </button>
                     </div>
-                    <div className="flex items-center space-x-4">
-                      <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(doc.status)}`}>
-                        {getStatusIcon(doc.status)}
-                        <span className="capitalize">{doc.status}</span>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <button className="p-2 text-gray-400 hover:text-gray-600">
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button className="p-2 text-gray-400 hover:text-gray-600">
-                          <Download className="w-4 h-4" />
-                        </button>
-                        <button className="p-2 text-gray-400 hover:text-gray-600">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ) : (
+                    // Render document list
+                    documents
+                      .filter(doc => doc.title.toLowerCase().includes(searchTerm.toLowerCase()))
+                      .map((doc) => (
+                        <div key={doc.id} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                          <div className="flex items-center space-x-4">
+                            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                              <FileText className="w-5 h-5 text-blue-600" />
+                            </div>
+                            <div>
+                              <h3 className="font-medium text-gray-900">{doc.title}</h3>
+                              <p className="text-sm text-gray-600">
+                                {doc.recipients?.length || 0} recipient{(doc.recipients?.length || 0) !== 1 ? 's' : ''} • {new Date(doc.created_at).toLocaleDateString()}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-4">
+                            <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(doc.status)}`}>
+                              {getStatusIcon(doc.status)}
+                              <span className="capitalize">{doc.status}</span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              {/* View document in new tab */}
+                              <button 
+                                onClick={() => window.open(doc.url, '_blank')}
+                                className="p-2 text-gray-400 hover:text-gray-600"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+                              {/* Download document */}
+                              <button 
+                                onClick={() => handleDownload(doc.url, doc.title)}
+                                className="p-2 text-gray-400 hover:text-gray-600"
+                              >
+                                <Download className="w-4 h-4" />
+                              </button>
+                              {/* Dropdown menu for additional actions */}
+                              <div className="relative">
+                                <button 
+                                  onClick={() => setOpenMenuId(openMenuId === doc.id ? null : doc.id)}
+                                  className="p-2 text-gray-400 hover:text-gray-600"
+                                >
+                                  <MoreHorizontal className="w-4 h-4" />
+                                </button>
+                                {openMenuId === doc.id && (
+                                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10">
+                                    <div className="py-1">
+                                      {/* Edit document (placeholder) */}
+                                      <button 
+                                        onClick={() => {
+                                          console.log('Edit document', doc.id);
+                                          setOpenMenuId(null);
+                                        }}
+                                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                      >
+                                        Edit
+                                      </button>
+                                      {/* Delete document with confirmation */}
+                                      <button 
+                                        onClick={() => {
+                                          if (window.confirm('Are you sure you want to delete this document?')) {
+                                            console.log('Delete document', doc.id);
+                                            // TODO: Implement actual delete functionality with DocumentService
+                                          }
+                                          setOpenMenuId(null);
+                                        }}
+                                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                  )}
+                </div>
+              )
             ) : activeTab === 'sent' ? (
+              // Render sent documents list
               <div className="space-y-4">
                 {filteredSentDocuments.map((doc) => (
                   <div key={doc.id} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
@@ -544,8 +521,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                                 )}
                               </div>
                             </div>
-                            
-                            {/* Signing URL */}
                             {recipient.signingUrl && (
                               <div className="mb-2">
                                 <div className="flex items-center space-x-2">
@@ -562,8 +537,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                                 </code>
                               </div>
                             )}
-                            
-                            {/* Access Logs */}
                             {recipient.accessLogs && recipient.accessLogs.length > 0 && (
                               <div className="mt-2">
                                 <details className="text-xs">
@@ -574,14 +547,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                                     {recipient.accessLogs.map((log, logIndex) => (
                                       <div key={logIndex} className="text-xs text-gray-600">
                                         <div className="flex items-center justify-between">
-                                          <span className="font-medium capitalize">
-                                            {log.action.replace('_', ' ')}
-                                          </span>
+                                          <span className="font-medium capitalize">{log.action.replace('_', ' ')}</span>
                                           <span>{new Date(log.timestamp).toLocaleString()}</span>
                                         </div>
-                                        <div className="text-gray-500">
-                                          IP: {log.ipAddress} • {log.location}
-                                        </div>
+                                        <div className="text-gray-500">IP: {log.ipAddress} • {log.location}</div>
                                       </div>
                                     ))}
                                   </div>
@@ -596,6 +565,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                 ))}
               </div>
             ) : (
+              // Render template list
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredTemplates.map((template) => (
                   <div key={template.id} className="bg-gray-50 p-6 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
@@ -650,7 +620,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                 <h1 class="text-2xl font-bold mb-2">${selectedTemplate.name.toUpperCase()}</h1>
                 <div class="w-24 h-0.5 bg-gray-400 mx-auto"></div>
               </div>
-              
               <div class="space-y-6">
                 <div class="grid grid-cols-2 gap-8">
                   <div>
@@ -659,7 +628,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                       <span class="bg-yellow-200 px-2 py-1 text-sm">[COMPANY_NAME]</span>
                     </div>
                   </div>
-                  
                   <div>
                     <p class="font-semibold mb-2">Party B (Receiving Party):</p>
                     <div class="border-b border-gray-400 pb-1 mb-4">
@@ -667,7 +635,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                     </div>
                   </div>
                 </div>
-                
                 <div class="mt-8">
                   <p class="text-justify leading-relaxed">
                     This ${selectedTemplate.name} ("Agreement") is entered into on 
@@ -675,7 +642,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                     by and between the parties identified above.
                   </p>
                 </div>
-                
                 <div class="mt-12 grid grid-cols-2 gap-8">
                   <div class="text-center">
                     <div class="border-t border-gray-400 pt-2 mt-16">
@@ -683,7 +649,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                       <div class="bg-red-200 px-2 py-1 mt-2 text-sm">[SIGNATURE_1]</div>
                     </div>
                   </div>
-                  
                   <div class="text-center">
                     <div class="border-t border-gray-400 pt-2 mt-16">
                       <p class="font-semibold">Party B Signature</p>

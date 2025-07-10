@@ -1,8 +1,9 @@
 import React from 'react';
-import { CheckCircle, Shield, Clock, Users, FileText, Zap, ArrowRight, Star } from 'lucide-react';
+import { CheckCircle, Shield, Clock, Users, FileText, Zap, ArrowRight } from 'lucide-react';
+import { Page } from '../types'; // Import Page type
 
 interface LandingPageProps {
-  onPageChange: (page: string) => void;
+  onPageChange: (page: Page) => void; // Updated to use Page type
 }
 
 const LandingPage: React.FC<LandingPageProps> = ({ onPageChange }) => {
@@ -10,7 +11,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ onPageChange }) => {
     <div className="min-h-screen bg-white">
       {/* Hero Section */}
       <section className="relative min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 overflow-hidden -mt-16 pt-16">
-        {/* Background decoration */}
         <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1557804506-669a67965ba0?ixlib=rb-4.0.3&auto=format&fit=crop&w=2074&q=80')] bg-cover bg-center opacity-10"></div>
         
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-16">
@@ -72,7 +72,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ onPageChange }) => {
             </div>
           </div>
 
-          {/* Hero Image */}
           <div className="mt-16 flex justify-center">
             <div className="relative max-w-4xl">
               <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 border border-white/20">
@@ -106,7 +105,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ onPageChange }) => {
         </div>
       </section>
 
-      {/* Features Section */}
       <section id="features" className="py-20 bg-gray-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
@@ -182,7 +180,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ onPageChange }) => {
         </div>
       </section>
 
-      {/* Stats Section */}
       <section className="py-20 bg-blue-600">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
@@ -207,7 +204,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ onPageChange }) => {
         </div>
       </section>
 
-      {/* Pricing Section */}
       <section id="pricing" className="py-20 bg-gray-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
@@ -326,7 +322,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ onPageChange }) => {
         </div>
       </section>
 
-      {/* CTA Section */}
       <section className="py-20 bg-gradient-to-r from-blue-600 to-purple-600">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">

@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileText, X, Eye, Edit3 } from 'lucide-react';
+import { Upload, FileText, X, Edit3 } from 'lucide-react';
 
 interface UploadedFile {
   id: string;
