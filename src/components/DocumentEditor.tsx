@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { useAuth } from '../hooks/useAuth';
-import { DocumentService } from '../services/DocumentService';
+import { DocumentService } from '../services/documentService';
 import { v4 as uuidv4 } from 'uuid';
 import { X, Save, Plus, Type, Edit3, MousePointer, Send, Mail, Users, UserPlus, Calendar, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
@@ -9,7 +9,6 @@ import { PDFDocument } from 'pdf-lib';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
-// Interface for signature fields placed on the document
 interface SignatureField {
   id: string;
   x: number;
@@ -23,7 +22,6 @@ interface SignatureField {
   assignedTo?: string | null;
 }
 
-// Interface for recipients who will receive the document
 interface Recipient {
   id: string;
   email: string;
@@ -31,7 +29,43 @@ interface Recipient {
   role: string;
 }
 
-// Interface for the DocumentEditor component props
+interface DocumentData {
+  id?: string;
+  title: string;
+  owner_id: string;
+  status?: 'draft' | 'sent' | 'signed' | 'completed';
+  content?: string | null;
+  file_url?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface RecipientData {
+  id?: string;
+  document_id: string;
+  email: string;
+  name: string;
+  role?: string;
+  status?: 'pending' | 'viewed' | 'signed';
+  signing_url_token?: string;
+  token_expiry?: string;
+  created_at?: string;
+}
+
+interface SignatureFieldData {
+  id?: string; // Added optional id for consistency
+  document_id: string;
+  field_type: 'signature' | 'text' | 'date';
+  x_position: number;
+  y_position: number;
+  width: number;
+  height: number;
+  page_number: number;
+  label: string;
+  required: boolean;
+  assigned_to?: string | null;
+}
+
 interface DocumentEditorProps {
   file?: File;
   templateContent?: string;
@@ -40,7 +74,38 @@ interface DocumentEditorProps {
   onSave: (fields: SignatureField[], documentData?: any) => void;
 }
 
-// DocumentEditor component definition
+interface Database {
+  public: {
+    Tables: {
+      documents: {
+        Insert: {
+          id?: string;
+          title: string;
+          owner_id: string;
+          status?: 'draft' | 'sent' | 'signed' | 'completed';
+          content?: string | null;
+          file_url?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      recipients: {
+        Insert: {
+          id?: string;
+          document_id: string;
+          email: string;
+          name: string;
+          role?: string;
+          status?: 'pending' | 'viewed' | 'signed';
+          signing_url_token?: string;
+          token_expiry?: string;
+          created_at?: string;
+        };
+      };
+    };
+  };
+}
+
 const DocumentEditor: React.FC<DocumentEditorProps> = ({
   file,
   templateContent,
@@ -68,11 +133,11 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   const [documentError, setDocumentError] = useState<string | null>(null);
   const [emailMessage, setEmailMessage] = useState('');
   const [sendingStep, setSendingStep] = useState<'compose' | 'sending' | 'sent'>('compose');
+  const [loading, setLoading] = useState(false);
 
   const pageRef = useRef<HTMLDivElement>(null);
   const signatureCanvasRef = useRef<SignatureCanvas>(null);
 
-  // Effect to handle file or template loading
   useEffect(() => {
     if (file) {
       const url = URL.createObjectURL(file);
@@ -91,21 +156,18 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     }
   }, [file, templateContent]);
 
-  // Callback for successful PDF loading
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
     setDocumentLoaded(true);
     setDocumentError(null);
   };
 
-  // Callback for PDF loading errors
   const onDocumentLoadError = (error: Error) => {
     console.error('Error loading PDF:', error);
     setDocumentError('Failed to load PDF document. Please try uploading again.');
     setDocumentLoaded(false);
   };
 
-  // Handle clicks on the page to place new fields
   const handlePageClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (selectedTool === 'select' || !isAddingField) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -129,7 +191,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     setIsAddingField(false);
   };
 
-  // Handle mouse down on a field to start dragging
   const handleFieldMouseDown = (event: React.MouseEvent, fieldId: string) => {
     event.stopPropagation();
     setSelectedField(fieldId);
@@ -141,7 +202,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     }
   };
 
-  // Handle mouse movement for dragging fields
   const handleMouseMove = (event: React.MouseEvent) => {
     if (!isDragging || !selectedField || !pageRef.current) return;
     const pageRect = pageRef.current.getBoundingClientRect();
@@ -157,18 +217,15 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     );
   };
 
-  // Handle mouse up to stop dragging
   const handleMouseUp = () => {
     setIsDragging(false);
   };
 
-  // Delete a field from the document
   const handleFieldDelete = (fieldId: string) => {
     setSignatureFields((prev) => prev.filter((field) => field.id !== fieldId));
     setSelectedField(null);
   };
 
-  // Save the signature from the canvas
   const saveSignature = async () => {
     if (!user || !signatureCanvasRef.current) return;
     try {
@@ -189,14 +246,12 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     }
   };
 
-  // Clear the signature canvas
   const clearSignature = () => {
     if (signatureCanvasRef.current) {
       signatureCanvasRef.current.clear();
     }
   };
 
-  // Save the document and its fields to Supabase
   const handleSave = async () => {
     if (!user || !file) {
       alert('You must be logged in and have a file to save the document.');
@@ -204,35 +259,30 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     }
 
     try {
-      // Step 1: Generate the edited PDF with fields
       const originalPdfBytes = await fetch(fileUrl).then((res) => res.arrayBuffer());
       const pdfDoc = await PDFDocument.load(originalPdfBytes);
       const form = pdfDoc.getForm();
 
       for (const field of signatureFields) {
         const page = pdfDoc.getPage(field.page - 1);
-        const rect = [field.x, page.getHeight() - field.y - field.height, field.x + field.width, page.getHeight() - field.y];
-
-        if (field.type === 'signature') {
-          const signatureField = form.createSignature(field.label);
-          signatureField.setRectangle(rect);
-          page.addAnnotation(signatureField);
-        } else if (field.type === 'text') {
-          const textField = form.createTextField(field.label);
-          textField.setRectangle(rect);
-          page.addAnnotation(textField);
-        } else if (field.type === 'date') {
-          const dateField = form.createTextField(field.label);
-          dateField.setRectangle(rect);
-          page.addAnnotation(dateField);
+        const fieldName = `${field.type}_${field.id}`;
+        const textField = form.createTextField(fieldName);
+        textField.addToPage(page, {
+          x: field.x,
+          y: page.getHeight() - field.y - field.height,
+          width: field.width,
+          height: field.height,
+        });
+        if (field.required) {
+          textField.setText(field.type === 'date' ? new Date().toISOString().split('T')[0] : field.label);
         }
       }
 
       const newPdfBytes = await pdfDoc.save();
       const editedFile = new File([newPdfBytes], `${file.name || 'edited'}.pdf`, { type: 'application/pdf' });
 
-      // Step 2: Create the document record without file_url
       const document = await DocumentService.createDocument({
+        id: uuidv4(),
         title: file.name || templateName || 'Untitled Document',
         owner_id: user.id,
         status: 'draft',
@@ -240,13 +290,10 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
       });
       const documentId = document.id;
 
-      // Step 3: Upload the edited PDF to Supabase Storage
       const publicUrl = await DocumentService.uploadDocumentFile(documentId, editedFile);
 
-      // Step 4: Update the document record with file_url
       await DocumentService.updateDocument(documentId, { file_url: publicUrl });
 
-      // Step 5: Save signature fields
       if (signatureFields.length > 0) {
         const fieldInserts = signatureFields.map((field) => ({
           document_id: documentId,
@@ -271,207 +318,121 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     }
   };
 
-  // Generate a unique signing URL for a recipient
-  const generateDocumentUrl = (documentId: string, recipientId: string) => {
-    const baseUrl = window.location.origin;
-    const token = uuidv4();
-    return `${baseUrl}/sign/${documentId}/${recipientId}?token=${token}`;
-  };
-
-  // Log access events for the document
-  const logAccess = async (documentId: string, recipientId: string | null, action: string) => {
-    try {
-      await DocumentService.logAccess({
-        document_id: documentId,
-        recipient_id: recipientId,
-        action,
-        ip_address: '127.0.0.1',
-        user_agent: navigator.userAgent,
-        location: 'Unknown',
-      });
-    } catch (error) {
-      console.error('Error logging access:', error);
-      throw error; // Re-throw to handle in caller
-    }
-  };
-
-  // Simulate sending emails to recipients with signing URLs
-  const sendEmailToRecipients = async (documentId: string) => {
-    const emailPromises = recipients.map(async (recipient) => {
-      const signingUrl = generateDocumentUrl(documentId, recipient.id);
-      await logAccess(documentId, recipient.id, 'email_sent');
-
-      const emailData = {
-        to: recipient.email,
-        subject: `Document Signature Request - ${file?.name || templateName}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
-              <h1 style="color: white; margin: 0; font-size: 28px;">SignPearl</h1>
-              <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Document Signature Request</p>
-            </div>
-            <div style="padding: 30px; background: white;">
-              <h2 style="color: #333; margin-bottom: 20px;">Hello ${recipient.name},</h2>
-              <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
-                You have been requested to sign the document: <strong>${file?.name || templateName}</strong>
-              </p>
-              <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                <h3 style="color: #333; margin-top: 0;">Document Details:</h3>
-                <ul style="color: #666; margin: 0; padding-left: 20px;">
-                  <li>Document: ${file?.name || templateName}</li>
-                  <li>Your Role: ${recipient.role}</li>
-                  <li>Fields to Complete: ${signatureFields.length}</li>
-                  <li>Sent: ${new Date().toLocaleDateString()}</li>
-                </ul>
-              </div>
-              <div style="text-align: center; margin: 30px 0;">
-                <a href="${signingUrl}" 
-                   style="background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
-                  Review & Sign Document
-                </a>
-              </div>
-              <p style="color: #999; font-size: 14px; margin-top: 30px;">
-                This link is unique to you and will expire in 30 days. If you have any questions, please contact the sender.
-              </p>
-            </div>
-            <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #eee;">
-              <p style="color: #999; margin: 0; font-size: 12px;">
-                Powered by SignPearl - Secure Digital Document Signing
-              </p>
-            </div>
-          </div>
-        `,
-        metadata: {
-          documentId,
-          recipientId: recipient.id,
-          signingUrl,
-          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        },
-      };
-
-      console.log('Email would be sent:', emailData);
-      return new Promise((resolve) => setTimeout(resolve, 500));
-    });
-
-    return Promise.all(emailPromises);
-  };
-
-  // Handle sending the document to recipients
   const handleSendDocument = async () => {
+    if (!file && !templateContent) {
+      alert('No document or template content to send.');
+      return;
+    }
     if (!user) {
       alert('You must be logged in to send a document.');
       return;
     }
-    try {
-      setSendingStep('sending');
-      const documentId = uuidv4();
 
-      // Step 1: Create the document in the database with initial status
-      const document = await DocumentService.createDocument({
-        id: documentId,
+    setLoading(true);
+    setSendingStep('sending');
+    console.log('Starting document send process...');
+
+    try {
+      console.log('Step 1: Creating document...');
+      const documentData: Database['public']['Tables']['documents']['Insert'] = {
+        id: uuidv4(),
         title: file?.name || templateName || 'Untitled Document',
         owner_id: user.id,
-        status: 'preparing',
-        content: templateContent,
+        status: recipients.length > 0 ? 'sent' : 'draft',
+        content: templateContent || null,
+        created_at: new Date().toISOString(),
+      };
+
+      const document = await DocumentService.createDocument(documentData);
+      console.log('Document created successfully:', document);
+
+      console.log('Step 2: Logging document creation access...');
+      await DocumentService.logAccess({
+        document_id: document.id,
+        recipient_id: null,
+        action: 'document_created',
+        ip_address: 'unknown',
+        user_agent: navigator.userAgent,
+        location: 'unknown',
       });
+      console.log('Access logged successfully.');
 
-      // Step 2: Log the access after document creation
-      await logAccess(documentId, null, 'document_created');
-
-      // Step 3: Generate and upload the edited PDF with fields
-      let publicUrl = fileUrl;
+      let fileUrl: string | undefined;
       if (file) {
-        const originalPdfBytes = await fetch(fileUrl).then((res) => res.arrayBuffer());
-        const pdfDoc = await PDFDocument.load(originalPdfBytes);
-        const form = pdfDoc.getForm();
-
-        for (const field of signatureFields) {
-          const page = pdfDoc.getPage(field.page - 1);
-          const rect = [field.x, page.getHeight() - field.y - field.height, field.x + field.width, page.getHeight() - field.y];
-
-          if (field.type === 'signature') {
-            const signatureField = form.createSignature(field.label);
-            signatureField.setRectangle(rect);
-            page.addAnnotation(signatureField);
-          } else if (field.type === 'text') {
-            const textField = form.createTextField(field.label);
-            textField.setRectangle(rect);
-            page.addAnnotation(textField);
-          } else if (field.type === 'date') {
-            const dateField = form.createTextField(field.label);
-            dateField.setRectangle(rect);
-            page.addAnnotation(dateField);
-          }
-        }
-
-        const newPdfBytes = await pdfDoc.save();
-        const editedFile = new File([newPdfBytes], `${file.name || 'edited'}.pdf`, { type: 'application/pdf' });
-        publicUrl = await DocumentService.uploadDocumentFile(documentId, editedFile);
+        console.log('Step 3: Processing and uploading PDF...');
+        fileUrl = await DocumentService.uploadDocumentFile(document.id, file);
+        console.log('PDF uploaded successfully, file_url:', fileUrl);
       }
 
-      // Step 4: Update the document with file_url
-      await DocumentService.updateDocument(documentId, { file_url: publicUrl });
+      console.log('Step 4: Saving signature fields...');
+      const signatureFieldsData: SignatureFieldData[] = signatureFields.map((field) => ({
+        id: field.id,
+        document_id: document.id,
+        field_type: field.type,
+        x_position: field.x,
+        y_position: field.y,
+        width: field.width,
+        height: field.height,
+        page_number: field.page,
+        label: field.label,
+        required: field.required,
+        assigned_to: field.assignedTo || null,
+      }));
 
-      // Step 5: Save signature fields
-      if (signatureFields.length > 0) {
-        const fieldInserts = signatureFields.map((field) => ({
-          document_id: documentId,
-          field_type: field.type,
-          x_position: field.x,
-          y_position: field.y,
-          width: field.width,
-          height: field.height,
-          page_number: field.page,
-          label: field.label,
-          required: field.required,
-          assigned_to: field.assignedTo,
-        }));
-        await DocumentService.saveSignatureFields(fieldInserts);
-      }
+      const savedFields = await DocumentService.saveSignatureFields(signatureFieldsData);
+      console.log('Signature fields saved:', savedFields);
 
-      // Step 6: Add recipients to the document
       if (recipients.length > 0) {
-        const recipientInserts = recipients.map((recipient) => ({
-          id: recipient.id,
-          document_id: documentId,
+        console.log('Step 5: Adding recipients...');
+        const recipientData: RecipientData[] = recipients.map((recipient) => ({
+          id: uuidv4(),
+          document_id: document.id,
           email: recipient.email,
           name: recipient.name,
-          role: recipient.role,
+          role: recipient.role || 'signer',
           status: 'pending',
           signing_url_token: uuidv4(),
-          token_expiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          token_expiry: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days expiry
+          created_at: new Date().toISOString(),
         }));
-        await DocumentService.addRecipients(recipientInserts);
-        await sendEmailToRecipients(documentId);
+
+        const addedRecipients = await DocumentService.addRecipients(recipientData);
+        console.log('Recipients added:', addedRecipients);
+
+        console.log('Step 6: Sending emails to recipients...');
+        for (const recipient of addedRecipients) {
+          const signingUrl = `${window.location.origin}/sign/${document.id}/${recipient.signing_url_token}`;
+          console.log(`Sending email to ${recipient.email} with signing URL: ${signingUrl}`);
+          // Placeholder for email sending logic (e.g., via a serverless function)
+          await DocumentService.logAccess({
+            document_id: document.id,
+            recipient_id: recipient.id,
+            action: 'email_sent',
+            ip_address: 'unknown',
+            user_agent: navigator.userAgent,
+            location: 'unknown',
+          });
+        }
+        console.log('Emails sent and logged.');
       }
 
-      // Step 7: Update document status to 'sent'
-      await DocumentService.updateDocument(documentId, { status: 'sent' });
-
+      console.log('Step 7: Notifying parent component...');
+      onSave(savedFields, { ...document, file_url: fileUrl });
+      console.log('Document send process completed.');
       setSendingStep('sent');
-      setTimeout(() => {
-        setShowSendModal(false);
-        setSendingStep('compose');
-        onSave(signatureFields, {
-          id: documentId,
-          name: document.title,
-          file_url: publicUrl,
-          recipients: recipients.map((r) => ({
-            ...r,
-            signingUrl: generateDocumentUrl(documentId, r.id),
-            status: 'pending',
-            sentAt: new Date().toISOString(),
-          })),
-        });
-      }, 2000);
-    } catch (error) {
-      console.error('Error sending document:', error);
-      alert('Error sending document. Please try again.');
+    } catch (error: any) {
+      console.error('HandleSendDocument failed:', error);
+      alert(`Failed to send document: ${error.message || 'Unknown error'}`);
       setSendingStep('compose');
+      // Cleanup: Delete the document if it was created
+      if (error.documentId) {
+        await DocumentService.deleteDocument(error.documentId);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Add a new recipient to the list
   const addRecipient = () => {
     if (newRecipient.email && newRecipient.name) {
       const recipient: Recipient = { id: uuidv4(), ...newRecipient };
@@ -480,12 +441,10 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     }
   };
 
-  // Remove a recipient from the list
   const removeRecipient = (id: string) => {
     setRecipients((prev) => prev.filter((r) => r.id !== id));
   };
 
-  // Filter fields for the current page
   const currentPageFields = signatureFields.filter((field) => field.page === currentPage);
 
   return (
@@ -939,6 +898,15 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                 </div>
                 <h4 className="text-xl font-semibold text-gray-900 mb-2">Document Sent Successfully!</h4>
                 <p className="text-gray-600">All recipients have been notified and can now sign the document.</p>
+                <button
+                  onClick={() => {
+                    setShowSendModal(false);
+                    setSendingStep('compose');
+                  }}
+                  className="mt-6 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Close
+                </button>
               </div>
             )}
 
@@ -969,7 +937,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                     </button>
                     <button
                       onClick={handleSendDocument}
-                      disabled={recipients.length === 0}
+                      disabled={recipients.length === 0 || loading}
                       className="px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 flex items-center space-x-2 font-medium"
                     >
                       <Send className="w-4 h-4" />

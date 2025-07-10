@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/supabase';
+import { v4 as uuidv4 } from 'uuid';
 
 type Document = Database['public']['Tables']['documents']['Row'];
 type DocumentInsert = Database['public']['Tables']['documents']['Insert'];
@@ -71,17 +72,45 @@ export class DocumentService {
 
   // File upload to Supabase Storage
   static async uploadDocumentFile(documentId: string, file: File): Promise<string> {
-    const filePath = `documents/${documentId}.pdf`;
-    const { error } = await supabase.storage
-      .from('documents')
-      .upload(filePath, file, {
-        contentType: 'application/pdf',
-        upsert: true,
-      });
-    if (error) throw error;
+    try {
+      // Corrected file path: relative to the 'documents' bucket
+      const filePath = `${documentId}/${uuidv4()}.pdf`;
+      const { error: uploadError } = await supabase.storage
+        .from('documents') // Bucket name
+        .upload(filePath, file, {
+          contentType: 'application/pdf',
+          upsert: true,
+        });
 
-    const { data } = supabase.storage.from('documents').getPublicUrl(filePath);
-    return data.publicUrl;
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        throw new Error(`Failed to upload file: ${uploadError.message}`);
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('documents')
+        .getPublicUrl(filePath);
+
+      if (!urlData?.publicUrl) {
+        throw new Error('Failed to generate public URL for the uploaded file');
+      }
+
+      // Update the document with the file_url
+      const { error: updateError } = await supabase
+        .from('documents')
+        .update({ file_url: urlData.publicUrl })
+        .eq('id', documentId);
+
+      if (updateError) {
+        console.error('Error updating document with file_url:', updateError);
+        throw new Error(`Failed to update document with file_url: ${updateError.message}`);
+      }
+
+      return urlData.publicUrl;
+    } catch (error: any) {
+      console.error('Error in uploadDocumentFile:', error);
+      throw error;
+    }
   }
 
   // Recipient operations

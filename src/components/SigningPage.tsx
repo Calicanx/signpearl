@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { DocumentService } from '../services/DocumentService';
+import { DocumentService } from '../services/documentService';
 import { FileText, Edit3, Calendar, Type, Check, X } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 

@@ -1,24 +1,26 @@
+// Dashboard.tsx
 import React, { useState, useEffect } from 'react';
-import { DocumentService } from '../services/DocumentService';
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  FileText, 
-  CheckCircle, 
-  AlertCircle, 
-  Users, 
+import { DocumentService } from '../services/documentService';
+import {
+  Plus,
+  Search,
+  Filter,
+  FileText,
+  CheckCircle,
+  AlertCircle,
+  Users,
   Download,
   MoreHorizontal,
   Eye,
   Edit3,
   Upload,
   Send,
-  Mail
+  Mail,
 } from 'lucide-react';
 import { Template } from '../types';
 import DocumentUpload from './DocumentUpload';
 import DocumentEditor from './DocumentEditor';
+import DocumentViewer from './DocumentViewer';
 import TemplateViewer from './TemplateViewer';
 
 // Define the props interface for the Dashboard component
@@ -36,7 +38,31 @@ interface UploadedFile {
   uploadedAt: Date;
 }
 
-// Interface for sent documents, including recipient details and access logs
+// Interface for document data (aligned with DocumentService)
+interface Document {
+  id: string;
+  title: string;
+  owner_id: string;
+  status: 'draft' | 'sent' | 'signed' | 'completed';
+  content?: string | null;
+  file_url?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  recipients: Array<{
+    id: string;
+    email: string;
+    name: string;
+    status: 'pending' | 'viewed' | 'signed';
+    signing_url_token?: string | null;
+    signatures?: Array<{
+      id: string;
+      recipient_id: string;
+      signed_at: string;
+    }> | null;
+  }>;
+}
+
+// Interface for sent documents (for consistency with mock data)
 interface SentDocument {
   id: string;
   title: string;
@@ -60,14 +86,16 @@ interface SentDocument {
 
 const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [activeTab, setActiveTab] = useState('documents');
-  const [documents, setDocuments] = useState<any[]>([]);
+  const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDocumentEditor, setShowDocumentEditor] = useState(false);
+  const [showDocumentViewer, setShowDocumentViewer] = useState(false);
   const [showTemplateViewer, setShowTemplateViewer] = useState(false);
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+  const [selectedDocumentUrl, setSelectedDocumentUrl] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [sentDocuments] = useState<SentDocument[]>([
     {
@@ -76,28 +104,28 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       status: 'signed',
       sentAt: '2024-01-15',
       recipients: [
-        { 
-          email: 'john@abccorp.com', 
-          name: 'John Smith', 
-          status: 'signed', 
+        {
+          email: 'john@abccorp.com',
+          name: 'John Smith',
+          status: 'signed',
           signedAt: '2024-01-16',
           signingUrl: '/sign/1/rec1',
           accessLogs: [
             { action: 'email_sent', timestamp: '2024-01-15T10:00:00Z', ipAddress: '192.168.1.100', userAgent: 'Mozilla/5.0...', location: 'New York, US' },
             { action: 'document_viewed', timestamp: '2024-01-15T14:30:00Z', ipAddress: '192.168.1.100', userAgent: 'Mozilla/5.0...', location: 'New York, US' },
-            { action: 'document_signed', timestamp: '2024-01-16T09:15:00Z', ipAddress: '192.168.1.100', userAgent: 'Mozilla/5.0...', location: 'New York, US' }
-          ]
+            { action: 'document_signed', timestamp: '2024-01-16T09:15:00Z', ipAddress: '192.168.1.100', userAgent: 'Mozilla/5.0...', location: 'New York, US' },
+          ],
         },
-        { 
-          email: 'jane@abccorp.com', 
-          name: 'Jane Doe', 
+        {
+          email: 'jane@abccorp.com',
+          name: 'Jane Doe',
           status: 'pending',
           signingUrl: '/sign/1/rec2',
           accessLogs: [
-            { action: 'email_sent', timestamp: '2024-01-15T10:00:00Z', ipAddress: '192.168.1.101', userAgent: 'Mozilla/5.0...', location: 'New York, US' }
-          ]
-        }
-      ]
+            { action: 'email_sent', timestamp: '2024-01-15T10:00:00Z', ipAddress: '192.168.1.101', userAgent: 'Mozilla/5.0...', location: 'New York, US' },
+          ],
+        },
+      ],
     },
     {
       id: '2',
@@ -105,20 +133,20 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       status: 'completed',
       sentAt: '2024-01-14',
       recipients: [
-        { 
-          email: 'founder@techstartup.com', 
-          name: 'Mike Johnson', 
-          status: 'signed', 
+        {
+          email: 'founder@techstartup.com',
+          name: 'Mike Johnson',
+          status: 'signed',
           signedAt: '2024-01-15',
           signingUrl: '/sign/2/rec3',
           accessLogs: [
             { action: 'email_sent', timestamp: '2024-01-14T15:00:00Z', ipAddress: '10.0.0.50', userAgent: 'Mozilla/5.0...', location: 'San Francisco, US' },
             { action: 'document_viewed', timestamp: '2024-01-14T16:45:00Z', ipAddress: '10.0.0.50', userAgent: 'Mozilla/5.0...', location: 'San Francisco, US' },
-            { action: 'document_signed', timestamp: '2024-01-15T08:30:00Z', ipAddress: '10.0.0.50', userAgent: 'Mozilla/5.0...', location: 'San Francisco, US' }
-          ]
-        }
-      ]
-    }
+            { action: 'document_signed', timestamp: '2024-01-15T08:30:00Z', ipAddress: '10.0.0.50', userAgent: 'Mozilla/5.0...', location: 'San Francisco, US' },
+          ],
+        },
+      ],
+    },
   ]);
 
   // Effect to load documents when the component mounts or user.id changes
@@ -140,13 +168,29 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   };
 
   // Function to handle document download
-  const handleDownload = (url: string, filename: string) => {
-    const link = document.createElement('a'); // Create a temporary anchor element
-    link.href = url; // Set the document URL
-    link.download = filename; // Set the filename for download
-    document.body.appendChild(link);
-    link.click(); // Trigger the download
-    document.body.removeChild(link); // Clean up
+  const handleDownload = async (fileUrl: string, filename: string) => {
+    try {
+      const response = await fetch(fileUrl);
+      if (!response.ok) throw new Error('Failed to fetch document');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading document:', error);
+      alert('Failed to download document. Please try again.');
+    }
+  };
+
+  // Function to handle document view
+  const handleDocumentView = (fileUrl: string) => {
+    setSelectedDocumentUrl(fileUrl);
+    setShowDocumentViewer(true);
   };
 
   // Mock template data
@@ -160,36 +204,48 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   // Function to determine status color based on document status
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'completed': return 'bg-green-100 text-green-800';
-      case 'signed': return 'bg-blue-100 text-blue-800';
+      case 'completed':
+        return 'bg-green-100 text-green-800';
+      case 'signed':
+        return 'bg-blue-100 text-blue-800';
+      case 'sent':
       case 'pending':
-      case 'sent': return 'bg-yellow-100 text-yellow-800';
-      case 'viewed': return 'bg-purple-100 text-purple-800';
-      case 'draft': return 'bg-gray-100 text-gray-800';
-      default: return 'bg-gray-100 text-gray-800';
+        return 'bg-yellow-100 text-yellow-800';
+      case 'viewed':
+        return 'bg-purple-100 text-purple-800';
+      case 'draft':
+        return 'bg-gray-100 text-gray-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
     }
   };
 
   // Function to determine status icon based on document status
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'completed': return <CheckCircle className="w-4 h-4" />;
-      case 'signed': return <CheckCircle className="w-4 h-4" />;
+      case 'completed':
+        return <CheckCircle className="w-4 h-4" />;
+      case 'signed':
+        return <CheckCircle className="w-4 h-4" />;
+      case 'sent':
       case 'pending':
-      case 'sent': return <AlertCircle className="w-4 h-4" />;
-      case 'viewed': return <Eye className="w-4 h-4" />;
-      case 'draft': return <Edit3 className="w-4 h-4" />;
-      default: return <AlertCircle className="w-4 h-4" />;
+        return <AlertCircle className="w-4 h-4" />;
+      case 'viewed':
+        return <Eye className="w-4 h-4" />;
+      case 'draft':
+        return <Edit3 className="w-4 h-4" />;
+      default:
+        return <AlertCircle className="w-4 h-4" />;
     }
   };
 
   // Filter templates based on search term
-  const filteredTemplates = templates.filter(template =>
+  const filteredTemplates = templates.filter((template) =>
     template.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // Filter sent documents based on search term
-  const filteredSentDocuments = sentDocuments.filter(doc =>
+  const filteredSentDocuments = sentDocuments.filter((doc) =>
     doc.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -225,7 +281,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
   // Summarize recipient status for sent documents
   const getRecipientStatusSummary = (recipients: SentDocument['recipients']) => {
-    const signed = recipients.filter(r => r.status === 'signed').length;
+    const signed = recipients.filter((r) => r.status === 'signed').length;
     const total = recipients.length;
     return `${signed}/${total} signed`;
   };
@@ -249,15 +305,13 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                 <p className="text-blue-100">Welcome back, {user.name}</p>
               </div>
               <div className="flex space-x-3">
-                {/* Button to open upload modal */}
-                <button 
+                <button
                   onClick={() => setShowUploadModal(true)}
                   className="bg-white/20 backdrop-blur-sm text-white px-6 py-3 rounded-lg hover:bg-white/30 transition-colors flex items-center space-x-2 border border-white/30"
                 >
                   <Upload className="w-5 h-5" />
                   <span>Upload Document</span>
                 </button>
-                {/* Button to create new document (placeholder) */}
                 <button className="bg-white/20 backdrop-blur-sm text-white px-6 py-3 rounded-lg hover:bg-white/30 transition-colors flex items-center space-x-2 border border-white/30">
                   <Plus className="w-5 h-5" />
                   <span>New Document</span>
@@ -279,7 +333,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Total Documents</p>
-                <p className="text-2xl font-bold text-gray-900">24</p>
+                <p className="text-2xl font-bold text-gray-900">{documents.length}</p>
               </div>
             </div>
           </div>
@@ -301,7 +355,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Completed</p>
-                <p className="text-2xl font-bold text-gray-900">18</p>
+                <p className="text-2xl font-bold text-gray-900">{documents.filter((doc) => doc.status === 'completed').length}</p>
               </div>
             </div>
           </div>
@@ -312,7 +366,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Recipients</p>
-                <p className="text-2xl font-bold text-gray-900">45</p>
+                <p className="text-2xl font-bold text-gray-900">{documents.reduce((sum, doc) => sum + (doc.recipients?.length || 0), 0)}</p>
               </div>
             </div>
           </div>
@@ -368,14 +422,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
           <div className="p-6">
             {activeTab === 'documents' ? (
               loading ? (
-                // Display loading spinner while documents are being fetched
                 <div className="flex items-center justify-center py-12">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {documents.length === 0 ? (
-                    // Display empty state if no documents are available
                     <div className="text-center py-12">
                       <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                       <h3 className="text-lg font-medium text-gray-900 mb-2">No documents yet</h3>
@@ -388,9 +440,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                       </button>
                     </div>
                   ) : (
-                    // Render document list
                     documents
-                      .filter(doc => doc.title.toLowerCase().includes(searchTerm.toLowerCase()))
+                      .filter((doc) => doc.title.toLowerCase().includes(searchTerm.toLowerCase()))
                       .map((doc) => (
                         <div key={doc.id} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
                           <div className="flex items-center space-x-4">
@@ -410,33 +461,34 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                               <span className="capitalize">{doc.status}</span>
                             </div>
                             <div className="flex items-center space-x-2">
-                              {/* View document in new tab */}
-                              <button 
-                                onClick={() => window.open(doc.url, '_blank')}
-                                className="p-2 text-gray-400 hover:text-gray-600"
+                              <button
+                                onClick={() => doc.file_url && handleDocumentView(doc.file_url)}
+                                disabled={!doc.file_url}
+                                className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                                title="View document"
                               >
                                 <Eye className="w-4 h-4" />
                               </button>
-                              {/* Download document */}
-                              <button 
-                                onClick={() => handleDownload(doc.url, doc.title)}
-                                className="p-2 text-gray-400 hover:text-gray-600"
+                              <button
+                                onClick={() => doc.file_url && handleDownload(doc.file_url, doc.title)}
+                                disabled={!doc.file_url}
+                                className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                                title="Download document"
                               >
                                 <Download className="w-4 h-4" />
                               </button>
-                              {/* Dropdown menu for additional actions */}
                               <div className="relative">
-                                <button 
+                                <button
                                   onClick={() => setOpenMenuId(openMenuId === doc.id ? null : doc.id)}
                                   className="p-2 text-gray-400 hover:text-gray-600"
+                                  title="More actions"
                                 >
                                   <MoreHorizontal className="w-4 h-4" />
                                 </button>
                                 {openMenuId === doc.id && (
                                   <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10">
                                     <div className="py-1">
-                                      {/* Edit document (placeholder) */}
-                                      <button 
+                                      <button
                                         onClick={() => {
                                           console.log('Edit document', doc.id);
                                           setOpenMenuId(null);
@@ -445,12 +497,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                                       >
                                         Edit
                                       </button>
-                                      {/* Delete document with confirmation */}
-                                      <button 
-                                        onClick={() => {
+                                      <button
+                                        onClick={async () => {
                                           if (window.confirm('Are you sure you want to delete this document?')) {
-                                            console.log('Delete document', doc.id);
-                                            // TODO: Implement actual delete functionality with DocumentService
+                                            try {
+                                              await DocumentService.deleteDocument(doc.id);
+                                              await loadDocuments();
+                                            } catch (error) {
+                                              console.error('Error deleting document:', error);
+                                              alert('Failed to delete document. Please try again.');
+                                            }
                                           }
                                           setOpenMenuId(null);
                                         }}
@@ -470,7 +526,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                 </div>
               )
             ) : activeTab === 'sent' ? (
-              // Render sent documents list
               <div className="space-y-4">
                 {filteredSentDocuments.map((doc) => (
                   <div key={doc.id} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
@@ -507,17 +562,19 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                                 <span className="text-gray-500">({recipient.email})</span>
                               </div>
                               <div className="flex items-center space-x-2">
-                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                  recipient.status === 'signed' ? 'bg-green-100 text-green-800' :
-                                  recipient.status === 'viewed' ? 'bg-purple-100 text-purple-800' :
-                                  'bg-yellow-100 text-yellow-800'
-                                }`}>
+                                <span
+                                  className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                    recipient.status === 'signed'
+                                      ? 'bg-green-100 text-green-800'
+                                      : recipient.status === 'viewed'
+                                      ? 'bg-purple-100 text-purple-800'
+                                      : 'bg-yellow-100 text-yellow-800'
+                                  }`}
+                                >
                                   {recipient.status}
                                 </span>
                                 {recipient.signedAt && (
-                                  <span className="text-xs text-gray-500">
-                                    Signed {recipient.signedAt}
-                                  </span>
+                                  <span className="text-xs text-gray-500">Signed {recipient.signedAt}</span>
                                 )}
                               </div>
                             </div>
@@ -565,7 +622,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                 ))}
               </div>
             ) : (
-              // Render template list
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredTemplates.map((template) => (
                   <div key={template.id} className="bg-gray-50 p-6 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
@@ -614,7 +670,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       {showDocumentEditor && (
         <DocumentEditor
           file={selectedFile?.file}
-          templateContent={selectedTemplate ? `
+          templateContent={
+            selectedTemplate
+              ? `
             <div class="p-8 bg-white min-h-[800px] font-serif">
               <div class="text-center mb-8">
                 <h1 class="text-2xl font-bold mb-2">${selectedTemplate.name.toUpperCase()}</h1>
@@ -658,7 +716,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                 </div>
               </div>
             </div>
-          ` : undefined}
+          `
+              : undefined
+          }
           templateName={selectedTemplate?.name}
           onClose={() => {
             setShowDocumentEditor(false);
@@ -666,6 +726,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             setSelectedTemplate(null);
           }}
           onSave={handleDocumentSave}
+        />
+      )}
+
+      {showDocumentViewer && selectedDocumentUrl && (
+        <DocumentViewer
+          fileUrl={selectedDocumentUrl}
+          onClose={() => {
+            setShowDocumentViewer(false);
+            setSelectedDocumentUrl(null);
+          }}
         />
       )}
 
