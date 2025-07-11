@@ -7,7 +7,51 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Initialize public Supabase client
+export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
+});
+
+// Cache for authenticated client to avoid multiple GoTrueClient instances
+let authClient: ReturnType<typeof createClient<Database>> | null = null;
+
+export const getAuthenticatedClient = async () => {
+  if (authClient) {
+    // Verify session is still valid
+    const { data: { session }, error } = await authClient.auth.getSession();
+    if (error || !session) {
+      console.error('Session error:', JSON.stringify(error, null, 2));
+      authClient = null; // Clear invalid client
+    } else {
+      console.log('Reusing authenticated client, user ID:', session.user.id);
+      return authClient;
+    }
+  }
+
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error || !session) {
+    console.error('Session error:', JSON.stringify(error, null, 2));
+    throw new Error('No authenticated session found');
+  }
+
+  console.log('Creating new authenticated client, user ID:', session.user.id);
+  authClient = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    },
+  });
+
+  return authClient;
+};
 
 // Database types
 export interface Database {
