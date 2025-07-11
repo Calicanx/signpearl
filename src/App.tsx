@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import Header from './components/Header';
 import LandingPage from './components/LandingPage';
 import SignIn from './components/SignIn';
 import SignUp from './components/SignUp';
 import Dashboard from './components/Dashboard';
-import SigningPage from './components/SigningPage';
 import Footer from './components/Footer';
 import { Page, AuthUser } from './types';
 
@@ -77,20 +76,22 @@ function App() {
     <Router>
       <div className="min-h-screen bg-white">
         <Routes>
-          <Route path="/sign/:documentId/:recipientId" element={<SigningPage />} />
-          <Route path="*" element={
-            <div className="min-h-screen">
-              <Header
-                currentPage={currentPage}
-                onPageChange={handlePageChange}
-                isAuthenticated={!!user}
-                user={user}
-                onSignOut={handleSignOut}
-              />
-              {renderCurrentPage()}
-              {currentPage === 'landing' && <Footer />}
-            </div>
-          } />
+          <Route
+            path="*"
+            element={
+              <div className="min-h-screen">
+                <Header
+                  currentPage={currentPage}
+                  onPageChange={handlePageChange}
+                  isAuthenticated={!!user}
+                  user={user}
+                  onSignOut={handleSignOut}
+                />
+                {renderCurrentPage()}
+                {currentPage === 'landing' && <Footer />}
+              </div>
+            }
+          />
         </Routes>
       </div>
     </Router>

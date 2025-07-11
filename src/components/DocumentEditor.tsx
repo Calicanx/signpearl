@@ -7,6 +7,7 @@ import { X, Save, Plus, Type, Edit3, MousePointer, Send, Mail, Users, UserPlus, 
 import SignatureCanvas from 'react-signature-canvas';
 import { PDFDocument } from 'pdf-lib';
 
+// Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
 interface SignatureField {
@@ -20,6 +21,7 @@ interface SignatureField {
   label: string;
   required: boolean;
   assignedTo?: string | null;
+  defaultValue?: string;
 }
 
 interface Recipient {
@@ -53,7 +55,7 @@ interface RecipientData {
 }
 
 interface SignatureFieldData {
-  id?: string; // Added optional id for consistency
+  id?: string;
   document_id: string;
   field_type: 'signature' | 'text' | 'date';
   x_position: number;
@@ -114,7 +116,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   onSave,
 }) => {
   const { user } = useAuth();
-
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [signatureFields, setSignatureFields] = useState<SignatureField[]>([]);
@@ -170,6 +171,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
 
   const handlePageClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (selectedTool === 'select' || !isAddingField) return;
+
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
@@ -185,6 +187,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
       label: `${selectedTool.charAt(0).toUpperCase() + selectedTool.slice(1)} Field`,
       required: true,
       assignedTo: null,
+      defaultValue: '',
     };
 
     setSignatureFields((prev) => [...prev, newField]);
@@ -198,12 +201,16 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     const field = signatureFields.find((f) => f.id === fieldId);
     if (field) {
       const rect = event.currentTarget.getBoundingClientRect();
-      setDragOffset({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+      setDragOffset({
+        x: event.clientX - rect.left - field.x,
+        y: event.clientY - rect.top - field.y,
+      });
     }
   };
 
   const handleMouseMove = (event: React.MouseEvent) => {
     if (!isDragging || !selectedField || !pageRef.current) return;
+
     const pageRect = pageRef.current.getBoundingClientRect();
     const newX = event.clientX - pageRect.left - dragOffset.x;
     const newY = event.clientY - pageRect.top - dragOffset.y;
@@ -228,6 +235,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
 
   const saveSignature = async () => {
     if (!user || !signatureCanvasRef.current) return;
+
     try {
       const signatureData = signatureCanvasRef.current.toDataURL();
       await DocumentService.saveSignature({
@@ -274,7 +282,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
           height: field.height,
         });
         if (field.required) {
-          textField.setText(field.type === 'date' ? new Date().toISOString().split('T')[0] : field.label);
+          textField.setText(field.defaultValue || (field.type === 'date' ? new Date().toISOString().split('T')[0] : field.label));
         }
       }
 
@@ -291,7 +299,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
       const documentId = document.id;
 
       const publicUrl = await DocumentService.uploadDocumentFile(documentId, editedFile);
-
       await DocumentService.updateDocument(documentId, { file_url: publicUrl });
 
       if (signatureFields.length > 0) {
@@ -392,7 +399,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
           role: recipient.role || 'signer',
           status: 'pending',
           signing_url_token: uuidv4(),
-          token_expiry: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days expiry
+          token_expiry: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
           created_at: new Date().toISOString(),
         }));
 
@@ -403,7 +410,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         for (const recipient of addedRecipients) {
           const signingUrl = `${window.location.origin}/sign/${document.id}/${recipient.signing_url_token}`;
           console.log(`Sending email to ${recipient.email} with signing URL: ${signingUrl}`);
-          // Placeholder for email sending logic (e.g., via a serverless function)
           await DocumentService.logAccess({
             document_id: document.id,
             recipient_id: recipient.id,
@@ -424,7 +430,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
       console.error('HandleSendDocument failed:', error);
       alert(`Failed to send document: ${error.message || 'Unknown error'}`);
       setSendingStep('compose');
-      // Cleanup: Delete the document if it was created
       if (error.documentId) {
         await DocumentService.deleteDocument(error.documentId);
       }
@@ -435,7 +440,12 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
 
   const addRecipient = () => {
     if (newRecipient.email && newRecipient.name) {
-      const recipient: Recipient = { id: uuidv4(), ...newRecipient };
+      const recipient: Recipient = {
+        id: uuidv4(),
+        email: newRecipient.email,
+        name: newRecipient.name,
+        role: newRecipient.role,
+      };
       setRecipients((prev) => [...prev, recipient]);
       setNewRecipient({ email: '', name: '', role: 'Signer' });
     }
@@ -450,11 +460,15 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl mx-4 max-h-[95vh] overflow-hidden flex">
+        {/* Left sidebar */}
         <div className="w-80 bg-gray-50 border-r border-gray-200 flex flex-col">
           <div className="p-6 border-b border-gray-200">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900">Document Editor</h2>
-              <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-lg transition-colors">
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -466,6 +480,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
             )}
           </div>
 
+          {/* Tools section */}
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-sm font-semibold text-gray-900 mb-3">Tools</h3>
             <div className="space-y-2">
@@ -525,6 +540,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
             )}
           </div>
 
+          {/* Fields list */}
           <div className="flex-1 p-6 overflow-y-auto">
             <h3 className="text-sm font-semibold text-gray-900 mb-3">Fields ({signatureFields.length})</h3>
             <div className="space-y-2">
@@ -558,6 +574,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
             </div>
           </div>
 
+          {/* Action buttons */}
           <div className="p-6 border-t border-gray-200">
             <div className="space-y-3">
               <button
@@ -585,7 +602,9 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
           </div>
         </div>
 
+        {/* Main document area */}
         <div className="flex-1 flex flex-col">
+          {/* Page navigation */}
           {!isTemplate && numPages > 1 && (
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
               <div className="flex items-center space-x-4">
@@ -608,11 +627,16 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                 </button>
               </div>
               <div className="text-sm text-gray-600">
-                {selectedTool === 'select' ? 'Select and drag fields to move them' : isAddingField ? `Click to place ${selectedTool} field` : ''}
+                {selectedTool === 'select'
+                  ? 'Select and drag fields to move them'
+                  : isAddingField
+                    ? `Click to place ${selectedTool} field`
+                    : ''}
               </div>
             </div>
           )}
 
+          {/* Document viewer */}
           <div className="flex-1 overflow-auto bg-gray-100 p-8">
             <div className="max-w-4xl mx-auto">
               <div
@@ -632,7 +656,10 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                     </div>
                   </div>
                 ) : isTemplate ? (
-                  <div className="min-h-[800px] p-8" dangerouslySetInnerHTML={{ __html: templateContent || '' }} />
+                  <div
+                    className="min-h-[800px] p-8"
+                    dangerouslySetInnerHTML={{ __html: templateContent || '' }}
+                  />
                 ) : file && fileUrl ? (
                   <Document
                     file={fileUrl}
@@ -670,15 +697,23 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   </div>
                 )}
 
+                {/* Signature fields overlay */}
                 {documentLoaded &&
                   currentPageFields.map((field) => (
                     <div
                       key={field.id}
                       onMouseDown={(e) => handleFieldMouseDown(e, field.id)}
                       className={`absolute border-2 border-dashed cursor-move flex items-center justify-center text-xs font-medium select-none ${
-                        selectedField === field.id ? 'border-blue-500 bg-blue-100 text-blue-700' : 'border-gray-400 bg-gray-100 text-gray-600'
+                        selectedField === field.id
+                          ? 'border-blue-500 bg-blue-100 text-blue-700'
+                          : 'border-gray-400 bg-gray-100 text-gray-600'
                       }`}
-                      style={{ left: field.x, top: field.y, width: field.width, height: field.height }}
+                      style={{
+                        left: field.x,
+                        top: field.y,
+                        width: field.width,
+                        height: field.height,
+                      }}
                     >
                       {field.type === 'signature' && 'Signature'}
                       {field.type === 'text' && 'Text'}
@@ -691,6 +726,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         </div>
       </div>
 
+      {/* Signature modal */}
       {showSignatureModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4">
@@ -701,11 +737,18 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
               <div className="border border-gray-300 rounded-lg">
                 <SignatureCanvas
                   ref={signatureCanvasRef}
-                  canvasProps={{ width: 600, height: 200, className: 'signature-canvas w-full' }}
+                  canvasProps={{
+                    width: 600,
+                    height: 200,
+                    className: 'signature-canvas w-full',
+                  }}
                 />
               </div>
               <div className="flex justify-between mt-4">
-                <button onClick={clearSignature} className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
+                <button
+                  onClick={clearSignature}
+                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
                   Clear
                 </button>
                 <div className="space-x-3">
@@ -715,7 +758,10 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   >
                     Cancel
                   </button>
-                  <button onClick={saveSignature} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                  <button
+                    onClick={saveSignature}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
                     Save Signature
                   </button>
                 </div>
@@ -725,6 +771,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         </div>
       )}
 
+      {/* Send modal */}
       {showSendModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 max-h-[90vh] overflow-hidden">
@@ -739,7 +786,10 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                     <p className="text-blue-100 text-sm">Share your document with recipients</p>
                   </div>
                 </div>
-                <button onClick={() => setShowSendModal(false)} className="p-2 hover:bg-white/20 rounded-lg transition-colors">
+                <button
+                  onClick={() => setShowSendModal(false)}
+                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                >
                   <X className="w-5 h-5" />
                 </button>
               </div>

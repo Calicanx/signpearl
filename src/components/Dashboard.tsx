@@ -1,4 +1,3 @@
-// Dashboard.tsx
 import React, { useState, useEffect } from 'react';
 import { DocumentService } from '../services/documentService';
 import {
@@ -17,7 +16,7 @@ import {
   Send,
   Mail,
 } from 'lucide-react';
-import { Template } from '../types';
+import { Template, Page } from '../types';
 import DocumentUpload from './DocumentUpload';
 import DocumentEditor from './DocumentEditor';
 import DocumentViewer from './DocumentViewer';
@@ -26,6 +25,7 @@ import TemplateViewer from './TemplateViewer';
 // Define the props interface for the Dashboard component
 interface DashboardProps {
   user: { id: string; name: string; email: string };
+  onPageChange: (page: Page) => void;
 }
 
 // Interface for uploaded files
@@ -84,10 +84,17 @@ interface SentDocument {
   }>;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ user }) => {
+// Interface for selected document
+interface SelectedDocument {
+  url: string;
+  id: string;
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
   const [activeTab, setActiveTab] = useState('documents');
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDocumentEditor, setShowDocumentEditor] = useState(false);
@@ -95,7 +102,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [showTemplateViewer, setShowTemplateViewer] = useState(false);
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
-  const [selectedDocumentUrl, setSelectedDocumentUrl] = useState<string | null>(null);
+  const [selectedDocument, setSelectedDocument] = useState<SelectedDocument | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [sentDocuments] = useState<SentDocument[]>([
     {
@@ -158,10 +165,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const loadDocuments = async () => {
     try {
       setLoading(true);
+      setError(null);
       const docs = await DocumentService.getDocumentsWithDetails(user.id);
       setDocuments(docs);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading documents:', error);
+      setError(error.message || 'Failed to load documents. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -181,15 +190,15 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error downloading document:', error);
-      alert('Failed to download document. Please try again.');
+      alert(error.message || 'Failed to download document. Please try again.');
     }
   };
 
   // Function to handle document view
-  const handleDocumentView = (fileUrl: string) => {
-    setSelectedDocumentUrl(fileUrl);
+  const handleDocumentView = (fileUrl: string, documentId: string) => {
+    setSelectedDocument({ url: fileUrl, id: documentId });
     setShowDocumentViewer(true);
   };
 
@@ -203,7 +212,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
   // Function to determine status color based on document status
   const getStatusColor = (status: string) => {
-    switch (status) {
+    switch (status.toLowerCase()) {
       case 'completed':
         return 'bg-green-100 text-green-800';
       case 'signed':
@@ -222,7 +231,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
   // Function to determine status icon based on document status
   const getStatusIcon = (status: string) => {
-    switch (status) {
+    switch (status.toLowerCase()) {
       case 'completed':
         return <CheckCircle className="w-4 h-4" />;
       case 'signed':
@@ -289,8 +298,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   // Copy signing URL to clipboard
   const copySigningUrl = (url: string) => {
     const fullUrl = `${window.location.origin}${url}`;
-    navigator.clipboard.writeText(fullUrl);
-    alert('Signing URL copied to clipboard!');
+    navigator.clipboard.writeText(fullUrl).then(() => {
+      alert('Signing URL copied to clipboard!');
+    }).catch((err) => {
+      console.error('Failed to copy URL:', err);
+      alert('Failed to copy URL. Please try again.');
+    });
   };
 
   return (
@@ -312,7 +325,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                   <Upload className="w-5 h-5" />
                   <span>Upload Document</span>
                 </button>
-                <button className="bg-white/20 backdrop-blur-sm text-white px-6 py-3 rounded-lg hover:bg-white/30 transition-colors flex items-center space-x-2 border border-white/30">
+                <button
+                  onClick={() => setShowDocumentEditor(true)}
+                  className="bg-white/20 backdrop-blur-sm text-white px-6 py-3 rounded-lg hover:bg-white/30 transition-colors flex items-center space-x-2 border border-white/30"
+                >
                   <Plus className="w-5 h-5" />
                   <span>New Document</span>
                 </button>
@@ -324,6 +340,13 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
       {/* Main content area */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Error message */}
+        {error && (
+          <div className="mb-6 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+            {error}
+          </div>
+        )}
+
         {/* Summary cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="bg-white p-6 rounded-lg shadow-sm">
@@ -379,19 +402,19 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             <nav className="flex space-x-8 px-6">
               <button
                 onClick={() => setActiveTab('documents')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'documents' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'documents' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
               >
                 Documents
               </button>
               <button
                 onClick={() => setActiveTab('sent')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'sent' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'sent' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
               >
                 Sent for Signature
               </button>
               <button
                 onClick={() => setActiveTab('templates')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'templates' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'templates' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
               >
                 Templates
               </button>
@@ -408,10 +431,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                   placeholder={`Search ${activeTab}...`}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
-              <button className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+              <button className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
                 <Filter className="w-5 h-5" />
                 <span>Filter</span>
               </button>
@@ -425,234 +448,248 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                 <div className="flex items-center justify-center py-12">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                 </div>
+              ) : documents.length === 0 ? (
+                <div className="text-center py-12">
+                  <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">No documents yet</h3>
+                  <p className="text-gray-600 mb-4">Get started by uploading your first document</p>
+                  <button
+                    onClick={() => setShowUploadModal(true)}
+                    className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Upload Document
+                  </button>
+                </div>
               ) : (
                 <div className="space-y-4">
-                  {documents.length === 0 ? (
-                    <div className="text-center py-12">
-                      <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">No documents yet</h3>
-                      <p className="text-gray-600 mb-4">Get started by uploading your first document</p>
-                      <button
-                        onClick={() => setShowUploadModal(true)}
-                        className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                      >
-                        Upload Document
-                      </button>
-                    </div>
-                  ) : (
-                    documents
-                      .filter((doc) => doc.title.toLowerCase().includes(searchTerm.toLowerCase()))
-                      .map((doc) => (
-                        <div key={doc.id} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                          <div className="flex items-center space-x-4">
-                            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                              <FileText className="w-5 h-5 text-blue-600" />
-                            </div>
-                            <div>
-                              <h3 className="font-medium text-gray-900">{doc.title}</h3>
-                              <p className="text-sm text-gray-600">
-                                {doc.recipients?.length || 0} recipient{(doc.recipients?.length || 0) !== 1 ? 's' : ''} • {new Date(doc.created_at).toLocaleDateString()}
-                              </p>
-                            </div>
+                  {documents
+                    .filter((doc) => doc.title.toLowerCase().includes(searchTerm.toLowerCase()))
+                    .map((doc) => (
+                      <div key={doc.id} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                        <div className="flex items-center space-x-4">
+                          <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                            <FileText className="w-5 h-5 text-blue-600" />
                           </div>
-                          <div className="flex items-center space-x-4">
-                            <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(doc.status)}`}>
-                              {getStatusIcon(doc.status)}
-                              <span className="capitalize">{doc.status}</span>
-                            </div>
-                            <div className="flex items-center space-x-2">
+                          <div>
+                            <h3 className="font-medium text-gray-900">{doc.title}</h3>
+                            <p className="text-sm text-gray-600">
+                              {doc.recipients?.length || 0} recipient{(doc.recipients?.length || 0) !== 1 ? 's' : ''} • {new Date(doc.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-4">
+                          <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(doc.status)}`}>
+                            {getStatusIcon(doc.status)}
+                            <span className="capitalize">{doc.status}</span>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => doc.file_url && handleDocumentView(doc.file_url, doc.id)}
+                              disabled={!doc.file_url}
+                              className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="View document"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => doc.file_url && handleDownload(doc.file_url, doc.title)}
+                              disabled={!doc.file_url}
+                              className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Download document"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                            <div className="relative">
                               <button
-                                onClick={() => doc.file_url && handleDocumentView(doc.file_url)}
-                                disabled={!doc.file_url}
-                                className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
-                                title="View document"
+                                onClick={() => setOpenMenuId(openMenuId === doc.id ? null : doc.id)}
+                                className="p-2 text-gray-400 hover:text-gray-600"
+                                title="More actions"
                               >
-                                <Eye className="w-4 h-4" />
+                                <MoreHorizontal className="w-4 h-4" />
                               </button>
-                              <button
-                                onClick={() => doc.file_url && handleDownload(doc.file_url, doc.title)}
-                                disabled={!doc.file_url}
-                                className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
-                                title="Download document"
-                              >
-                                <Download className="w-4 h-4" />
-                              </button>
-                              <div className="relative">
-                                <button
-                                  onClick={() => setOpenMenuId(openMenuId === doc.id ? null : doc.id)}
-                                  className="p-2 text-gray-400 hover:text-gray-600"
-                                  title="More actions"
-                                >
-                                  <MoreHorizontal className="w-4 h-4" />
-                                </button>
-                                {openMenuId === doc.id && (
-                                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10">
-                                    <div className="py-1">
-                                      <button
-                                        onClick={() => {
-                                          console.log('Edit document', doc.id);
-                                          setOpenMenuId(null);
-                                        }}
-                                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                      >
-                                        Edit
-                                      </button>
-                                      <button
-                                        onClick={async () => {
-                                          if (window.confirm('Are you sure you want to delete this document?')) {
-                                            try {
-                                              await DocumentService.deleteDocument(doc.id);
-                                              await loadDocuments();
-                                            } catch (error) {
-                                              console.error('Error deleting document:', error);
-                                              alert('Failed to delete document. Please try again.');
-                                            }
+                              {openMenuId === doc.id && (
+                                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10">
+                                  <div className="py-1">
+                                    <button
+                                      onClick={() => {
+                                        console.log('Edit document', doc.id);
+                                        setOpenMenuId(null);
+                                      }}
+                                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      onClick={async () => {
+                                        if (window.confirm('Are you sure you want to delete this document?')) {
+                                          try {
+                                            await DocumentService.deleteDocument(doc.id);
+                                            await loadDocuments();
+                                          } catch (error: any) {
+                                            console.error('Error deleting document:', error);
+                                            alert(error.message || 'Failed to delete document. Please try again.');
                                           }
-                                          setOpenMenuId(null);
-                                        }}
-                                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                      >
-                                        Delete
-                                      </button>
-                                    </div>
+                                        }
+                                        setOpenMenuId(null);
+                                      }}
+                                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    >
+                                      Delete
+                                    </button>
                                   </div>
-                                )}
-                              </div>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
-                      ))
-                  )}
+                      </div>
+                    ))}
                 </div>
               )
             ) : activeTab === 'sent' ? (
               <div className="space-y-4">
-                {filteredSentDocuments.map((doc) => (
-                  <div key={doc.id} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center space-x-4">
-                        <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                          <Send className="w-5 h-5 text-green-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-medium text-gray-900">{doc.title}</h3>
-                          <p className="text-sm text-gray-600">
-                            Sent on {doc.sentAt} • {getRecipientStatusSummary(doc.recipients)}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-4">
-                        <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(doc.status)}`}>
-                          {getStatusIcon(doc.status)}
-                          <span className="capitalize">{doc.status}</span>
-                        </div>
-                        <button className="p-2 text-gray-400 hover:text-gray-600">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="ml-14">
-                      <div className="space-y-3">
-                        {doc.recipients.map((recipient, index) => (
-                          <div key={index} className="border border-gray-200 rounded-lg p-3">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center space-x-2">
-                                <Mail className="w-4 h-4 text-gray-400" />
-                                <span className="text-gray-900 font-medium">{recipient.name}</span>
-                                <span className="text-gray-500">({recipient.email})</span>
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                <span
-                                  className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                    recipient.status === 'signed'
-                                      ? 'bg-green-100 text-green-800'
-                                      : recipient.status === 'viewed'
-                                      ? 'bg-purple-100 text-purple-800'
-                                      : 'bg-yellow-100 text-yellow-800'
-                                  }`}
-                                >
-                                  {recipient.status}
-                                </span>
-                                {recipient.signedAt && (
-                                  <span className="text-xs text-gray-500">Signed {recipient.signedAt}</span>
-                                )}
-                              </div>
-                            </div>
-                            {recipient.signingUrl && (
-                              <div className="mb-2">
-                                <div className="flex items-center space-x-2">
-                                  <span className="text-xs font-medium text-gray-700">Signing URL:</span>
-                                  <button
-                                    onClick={() => copySigningUrl(recipient.signingUrl!)}
-                                    className="text-xs text-blue-600 hover:text-blue-700 underline"
-                                  >
-                                    Copy Link
-                                  </button>
-                                </div>
-                                <code className="text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded block mt-1">
-                                  {window.location.origin}{recipient.signingUrl}
-                                </code>
-                              </div>
-                            )}
-                            {recipient.accessLogs && recipient.accessLogs.length > 0 && (
-                              <div className="mt-2">
-                                <details className="text-xs">
-                                  <summary className="cursor-pointer text-gray-700 font-medium hover:text-gray-900">
-                                    Access History ({recipient.accessLogs.length} events)
-                                  </summary>
-                                  <div className="mt-2 space-y-1 pl-4 border-l-2 border-gray-200">
-                                    {recipient.accessLogs.map((log, logIndex) => (
-                                      <div key={logIndex} className="text-xs text-gray-600">
-                                        <div className="flex items-center justify-between">
-                                          <span className="font-medium capitalize">{log.action.replace('_', ' ')}</span>
-                                          <span>{new Date(log.timestamp).toLocaleString()}</span>
-                                        </div>
-                                        <div className="text-gray-500">IP: {log.ipAddress} • {log.location}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </details>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                {filteredSentDocuments.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Send className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No sent documents</h3>
+                    <p className="text-gray-600">You haven't sent any documents for signature yet.</p>
                   </div>
-                ))}
+                ) : (
+                  filteredSentDocuments.map((doc) => (
+                    <div key={doc.id} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center space-x-4">
+                          <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                            <Send className="w-5 h-5 text-green-600" />
+                          </div>
+                          <div>
+                            <h3 className="font-medium text-gray-900">{doc.title}</h3>
+                            <p className="text-sm text-gray-600">
+                              Sent on {new Date(doc.sentAt).toLocaleDateString()} • {getRecipientStatusSummary(doc.recipients)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-4">
+                          <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(doc.status)}`}>
+                            {getStatusIcon(doc.status)}
+                            <span className="capitalize">{doc.status}</span>
+                          </div>
+                          <button className="p-2 text-gray-400 hover:text-gray-600">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="ml-14">
+                        <div className="space-y-3">
+                          {doc.recipients.map((recipient, index) => (
+                            <div key={index} className="border border-gray-200 rounded-lg p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center space-x-2">
+                                  <Mail className="w-4 h-4 text-gray-400" />
+                                  <span className="text-gray-900 font-medium">{recipient.name}</span>
+                                  <span className="text-gray-500">({recipient.email})</span>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  <span
+                                    className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                      recipient.status === 'signed'
+                                        ? 'bg-green-100 text-green-800'
+                                        : recipient.status === 'viewed'
+                                        ? 'bg-purple-100 text-purple-800'
+                                        : 'bg-yellow-100 text-yellow-800'
+                                    }`}
+                                  >
+                                    {recipient.status}
+                                  </span>
+                                  {recipient.signedAt && (
+                                    <span className="text-xs text-gray-500">Signed {new Date(recipient.signedAt).toLocaleDateString()}</span>
+                                  )}
+                                </div>
+                              </div>
+                              {recipient.signingUrl && (
+                                <div className="mb-2">
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-xs font-medium text-gray-700">Signing URL:</span>
+                                    <button
+                                      onClick={() => copySigningUrl(recipient.signingUrl!)}
+                                      className="text-xs text-blue-600 hover:text-blue-700 underline"
+                                    >
+                                      Copy Link
+                                    </button>
+                                  </div>
+                                  <code className="text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded block mt-1 truncate">
+                                    {window.location.origin}{recipient.signingUrl}
+                                  </code>
+                                </div>
+                              )}
+                              {recipient.accessLogs && recipient.accessLogs.length > 0 && (
+                                <div className="mt-2">
+                                  <details className="text-xs">
+                                    <summary className="cursor-pointer text-gray-700 font-medium hover:text-gray-900">
+                                      Access History ({recipient.accessLogs.length} events)
+                                    </summary>
+                                    <div className="mt-2 space-y-1 pl-4 border-l-2 border-gray-200">
+                                      {recipient.accessLogs.map((log, logIndex) => (
+                                        <div key={logIndex} className="text-xs text-gray-600">
+                                          <div className="flex items-center justify-between">
+                                            <span className="font-medium capitalize">{log.action.replace('_', ' ')}</span>
+                                            <span>{new Date(log.timestamp).toLocaleString()}</span>
+                                          </div>
+                                          <div className="text-gray-500">IP: {log.ipAddress} • {log.location}</div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </details>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredTemplates.map((template) => (
-                  <div key={template.id} className="bg-gray-50 p-6 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                        <FileText className="w-5 h-5 text-purple-600" />
-                      </div>
-                      <span className="text-xs text-gray-500">{template.usage} uses</span>
-                    </div>
-                    <h3 className="font-medium text-gray-900 mb-2">{template.name}</h3>
-                    <p className="text-sm text-gray-600 mb-4">{template.description}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-gray-500 uppercase">{template.category}</span>
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={() => handleTemplateView(template)}
-                          className="text-gray-600 hover:text-gray-700 text-sm font-medium flex items-center space-x-1"
-                        >
-                          <Eye className="w-4 h-4" />
-                          <span>View</span>
-                        </button>
-                        <button
-                          onClick={() => handleTemplateUse(template)}
-                          className="text-blue-600 hover:text-blue-700 text-sm font-medium"
-                        >
-                          Use Template
-                        </button>
-                      </div>
-                    </div>
+                {filteredTemplates.length === 0 ? (
+                  <div className="text-center py-12 col-span-full">
+                    <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No templates found</h3>
+                    <p className="text-gray-600">Try adjusting your search term.</p>
                   </div>
-                ))}
+                ) : (
+                  filteredTemplates.map((template) => (
+                    <div key={template.id} className="bg-gray-50 p-6 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                          <FileText className="w-5 h-5 text-purple-600" />
+                        </div>
+                        <span className="text-xs text-gray-500">{template.usage} uses</span>
+                      </div>
+                      <h3 className="font-medium text-gray-900 mb-2">{template.name}</h3>
+                      <p className="text-sm text-gray-600 mb-4 line-clamp-2">{template.description}</p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-gray-500 uppercase">{template.category}</span>
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => handleTemplateView(template)}
+                            className="text-gray-600 hover:text-gray-700 text-sm font-medium flex items-center space-x-1"
+                          >
+                            <Eye className="w-4 h-4" />
+                            <span>View</span>
+                          </button>
+                          <button
+                            onClick={() => handleTemplateUse(template)}
+                            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                          >
+                            Use Template
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             )}
           </div>
@@ -729,13 +766,15 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
         />
       )}
 
-      {showDocumentViewer && selectedDocumentUrl && (
+      {showDocumentViewer && selectedDocument && (
         <DocumentViewer
-          fileUrl={selectedDocumentUrl}
+          fileUrl={selectedDocument.url}
+          documentId={selectedDocument.id}
           onClose={() => {
             setShowDocumentViewer(false);
-            setSelectedDocumentUrl(null);
+            setSelectedDocument(null);
           }}
+          isSigningEnabled={false}
         />
       )}
 

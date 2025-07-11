@@ -1,59 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 
+// Retrieve Supabase environment variables
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+// Validate environment variables
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables');
+  throw new Error('Missing Supabase environment variables: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be defined');
 }
 
-// Initialize public Supabase client
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: true,
-  },
-});
-
-// Cache for authenticated client to avoid multiple GoTrueClient instances
-let authClient: ReturnType<typeof createClient<Database>> | null = null;
-
-export const getAuthenticatedClient = async () => {
-  if (authClient) {
-    // Verify session is still valid
-    const { data: { session }, error } = await authClient.auth.getSession();
-    if (error || !session) {
-      console.error('Session error:', JSON.stringify(error, null, 2));
-      authClient = null; // Clear invalid client
-    } else {
-      console.log('Reusing authenticated client, user ID:', session.user.id);
-      return authClient;
-    }
-  }
-
-  const { data: { session }, error } = await supabase.auth.getSession();
-  if (error || !session) {
-    console.error('Session error:', JSON.stringify(error, null, 2));
-    throw new Error('No authenticated session found');
-  }
-
-  console.log('Creating new authenticated client, user ID:', session.user.id);
-  authClient = createClient<Database>(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      autoRefreshToken: true,
-      persistSession: true,
-      detectSessionInUrl: true,
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-      },
-    },
-  });
-
-  return authClient;
-};
-
-// Database types
+// Database type definitions
 export interface Database {
   public: {
     Tables: {
@@ -66,7 +22,7 @@ export interface Database {
           content: string | null;
           file_url: string | null;
           created_at: string;
-          updated_at: string;
+          updated_at: string | null;
         };
         Insert: {
           id?: string;
@@ -76,7 +32,7 @@ export interface Database {
           content?: string | null;
           file_url?: string | null;
           created_at?: string;
-          updated_at?: string;
+          updated_at?: string | null;
         };
         Update: {
           id?: string;
@@ -86,7 +42,7 @@ export interface Database {
           content?: string | null;
           file_url?: string | null;
           created_at?: string;
-          updated_at?: string;
+          updated_at?: string | null;
         };
       };
       recipients: {
@@ -95,10 +51,10 @@ export interface Database {
           document_id: string;
           email: string;
           name: string;
-          role: string;
+          role?: string;
           status: 'pending' | 'viewed' | 'signed';
-          signing_url_token: string;
-          token_expiry: string;
+          signing_url_token: string | null;
+          token_expiry: string | null;
           created_at: string;
         };
         Insert: {
@@ -108,8 +64,8 @@ export interface Database {
           name: string;
           role?: string;
           status?: 'pending' | 'viewed' | 'signed';
-          signing_url_token?: string;
-          token_expiry?: string;
+          signing_url_token?: string | null;
+          token_expiry?: string | null;
           created_at?: string;
         };
         Update: {
@@ -119,8 +75,8 @@ export interface Database {
           name?: string;
           role?: string;
           status?: 'pending' | 'viewed' | 'signed';
-          signing_url_token?: string;
-          token_expiry?: string;
+          signing_url_token?: string | null;
+          token_expiry?: string | null;
           created_at?: string;
         };
       };
@@ -128,7 +84,8 @@ export interface Database {
         Row: {
           id: string;
           document_id: string;
-          recipient_id: string;
+          field_id: string | null;
+          recipient_id: string | null;
           signed_at: string;
           ip_address: string | null;
           signature_data: string | null;
@@ -138,7 +95,8 @@ export interface Database {
         Insert: {
           id?: string;
           document_id: string;
-          recipient_id: string;
+          field_id?: string | null;
+          recipient_id?: string | null;
           signed_at?: string;
           ip_address?: string | null;
           signature_data?: string | null;
@@ -148,7 +106,8 @@ export interface Database {
         Update: {
           id?: string;
           document_id?: string;
-          recipient_id?: string;
+          field_id?: string | null;
+          recipient_id?: string | null;
           signed_at?: string;
           ip_address?: string | null;
           signature_data?: string | null;
@@ -179,7 +138,7 @@ export interface Database {
           y_position: number;
           width: number;
           height: number;
-          page_number?: number;
+          page_number: number;
           label: string;
           required?: boolean;
           assigned_to?: string | null;
@@ -235,3 +194,43 @@ export interface Database {
     };
   };
 }
+
+// Initialize public Supabase client
+export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
+});
+
+// Cache for authenticated client
+let authClient: ReturnType<typeof createClient<Database>> | null = null;
+
+export const getAuthenticatedClient = async () => {
+  if (authClient) {
+    console.log('Reusing cached authenticated client');
+    return authClient;
+  }
+
+  try {
+    const { data: { session }, error } = await supabase.auth.getSession();
+
+    if (error) {
+      console.error('Error fetching session:', JSON.stringify(error, null, 2));
+      throw new Error(`Failed to fetch session: ${error.message}`);
+    }
+
+    if (!session) {
+      console.error('No active session found');
+      throw new Error('No authenticated session found');
+    }
+
+    console.log('Creating new authenticated client, user ID:', session.user.id);
+    authClient = supabase; // Use the same client instance since it's already authenticated
+    return authClient;
+  } catch (error: any) {
+    console.error('getAuthenticatedClient failed:', JSON.stringify(error, null, 2));
+    throw new Error(`Authentication error: ${error.message}`);
+  }
+};
