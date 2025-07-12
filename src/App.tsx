@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import Header from './components/Header';
@@ -6,6 +6,7 @@ import LandingPage from './components/LandingPage';
 import SignIn from './components/SignIn';
 import SignUp from './components/SignUp';
 import Dashboard from './components/Dashboard';
+import DocumentSign from './components/DocumentSign';
 import Footer from './components/Footer';
 import { Page, AuthUser } from './types';
 
@@ -57,25 +58,13 @@ function App() {
     );
   }
 
-  const renderCurrentPage = () => {
-    switch (currentPage) {
-      case 'landing':
-        return <LandingPage onPageChange={handlePageChange} />;
-      case 'signin':
-        return <SignIn onPageChange={handlePageChange} onSignIn={handleSignIn} />;
-      case 'signup':
-        return <SignUp onPageChange={handlePageChange} onSignUp={handleSignUp} />;
-      case 'dashboard':
-        return user ? <Dashboard user={user} onPageChange={handlePageChange} /> : <LandingPage onPageChange={handlePageChange} />;
-      default:
-        return <LandingPage onPageChange={handlePageChange} />;
-    }
-  };
-
   return (
     <Router>
       <div className="min-h-screen bg-white">
         <Routes>
+          {/* Public route for document signing */}
+          <Route path="/sign/:documentId/:token" element={<DocumentSign />} />
+          {/* Protected routes */}
           <Route
             path="*"
             element={
@@ -87,7 +76,24 @@ function App() {
                   user={user}
                   onSignOut={handleSignOut}
                 />
-                {renderCurrentPage()}
+                {(() => {
+                  switch (currentPage) {
+                    case 'landing':
+                      return <LandingPage onPageChange={handlePageChange} />;
+                    case 'signin':
+                      return <SignIn onPageChange={handlePageChange} onSignIn={handleSignIn} />;
+                    case 'signup':
+                      return <SignUp onPageChange={handlePageChange} onSignUp={handleSignUp} />;
+                    case 'dashboard':
+                      return user ? (
+                        <Dashboard user={user} onPageChange={handlePageChange} />
+                      ) : (
+                        <Navigate to="/" replace />
+                      );
+                    default:
+                      return <LandingPage onPageChange={handlePageChange} />;
+                  }
+                })()}
                 {currentPage === 'landing' && <Footer />}
               </div>
             }

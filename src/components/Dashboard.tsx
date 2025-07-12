@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { DocumentService } from '../services/documentService';
 import {
   Plus,
@@ -22,13 +22,11 @@ import DocumentEditor from './DocumentEditor';
 import DocumentViewer from './DocumentViewer';
 import TemplateViewer from './TemplateViewer';
 
-// Define the props interface for the Dashboard component
 interface DashboardProps {
   user: { id: string; name: string; email: string };
   onPageChange: (page: Page) => void;
 }
 
-// Interface for uploaded files
 interface UploadedFile {
   id: string;
   file: File;
@@ -38,13 +36,11 @@ interface UploadedFile {
   uploadedAt: Date;
 }
 
-// Interface for document data (aligned with DocumentService)
 interface Document {
   id: string;
   title: string;
   owner_id: string;
   status: 'draft' | 'sent' | 'signed' | 'completed';
-  content?: string | null;
   file_url?: string | null;
   created_at: string;
   updated_at?: string | null;
@@ -62,11 +58,10 @@ interface Document {
   }>;
 }
 
-// Interface for sent documents (for consistency with mock data)
 interface SentDocument {
   id: string;
   title: string;
-  status: 'sent' | 'viewed' | 'signed' | 'completed';
+  status: 'sent' | 'signed' | 'completed';
   sentAt: string;
   recipients: Array<{
     email: string;
@@ -77,22 +72,42 @@ interface SentDocument {
     accessLogs?: Array<{
       action: string;
       timestamp: string;
-      ipAddress: string;
-      userAgent: string;
+      ip_address: string;
+      user_agent: string;
       location: string;
     }>;
   }>;
 }
 
-// Interface for selected document
 interface SelectedDocument {
   url: string;
   id: string;
 }
 
+interface SignatureField {
+  id: string;
+  x_position: number;
+  y_position: number;
+  width: number;
+  height: number;
+  page_number: number;
+  field_type: 'signature' | 'text' | 'date';
+  label: string;
+  required: boolean;
+  assigned_to?: string | null;
+  defaultValue?: string | null;
+  signature_data?: string | null;
+}
+
+const isValidUUID = (uuid: string): boolean => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuid != null && uuidRegex.test(uuid);
+};
+
 const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
   const [activeTab, setActiveTab] = useState('documents');
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [sentDocuments, setSentDocuments] = useState<SentDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -104,114 +119,98 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<SelectedDocument | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [sentDocuments] = useState<SentDocument[]>([
-    {
-      id: '1',
-      title: 'Service Agreement - ABC Corp',
-      status: 'signed',
-      sentAt: '2024-01-15',
-      recipients: [
-        {
-          email: 'john@abccorp.com',
-          name: 'John Smith',
-          status: 'signed',
-          signedAt: '2024-01-16',
-          signingUrl: '/sign/1/rec1',
-          accessLogs: [
-            { action: 'email_sent', timestamp: '2024-01-15T10:00:00Z', ipAddress: '192.168.1.100', userAgent: 'Mozilla/5.0...', location: 'New York, US' },
-            { action: 'document_viewed', timestamp: '2024-01-15T14:30:00Z', ipAddress: '192.168.1.100', userAgent: 'Mozilla/5.0...', location: 'New York, US' },
-            { action: 'document_signed', timestamp: '2024-01-16T09:15:00Z', ipAddress: '192.168.1.100', userAgent: 'Mozilla/5.0...', location: 'New York, US' },
-          ],
-        },
-        {
-          email: 'jane@abccorp.com',
-          name: 'Jane Doe',
-          status: 'pending',
-          signingUrl: '/sign/1/rec2',
-          accessLogs: [
-            { action: 'email_sent', timestamp: '2024-01-15T10:00:00Z', ipAddress: '192.168.1.101', userAgent: 'Mozilla/5.0...', location: 'New York, US' },
-          ],
-        },
-      ],
-    },
-    {
-      id: '2',
-      title: 'NDA - Tech Startup',
-      status: 'completed',
-      sentAt: '2024-01-14',
-      recipients: [
-        {
-          email: 'founder@techstartup.com',
-          name: 'Mike Johnson',
-          status: 'signed',
-          signedAt: '2024-01-15',
-          signingUrl: '/sign/2/rec3',
-          accessLogs: [
-            { action: 'email_sent', timestamp: '2024-01-14T15:00:00Z', ipAddress: '10.0.0.50', userAgent: 'Mozilla/5.0...', location: 'San Francisco, US' },
-            { action: 'document_viewed', timestamp: '2024-01-14T16:45:00Z', ipAddress: '10.0.0.50', userAgent: 'Mozilla/5.0...', location: 'San Francisco, US' },
-            { action: 'document_signed', timestamp: '2024-01-15T08:30:00Z', ipAddress: '10.0.0.50', userAgent: 'Mozilla/5.0...', location: 'San Francisco, US' },
-          ],
-        },
-      ],
-    },
-  ]);
+  const [fields, setFields] = useState<SignatureField[]>([]);
 
-  // Effect to load documents when the component mounts or user.id changes
+  // Memoize fields to prevent unnecessary re-renders
+  const memoizedFields = useMemo(() => fields || [], [fields]);
+
+  // Initialize fields once on component mount
   useEffect(() => {
-    loadDocuments();
+    setFields([]); // Initialize fields as empty or load from a service if needed
+  }, []);
+
+  // Load documents and sent documents
+  useEffect(() => {
+    const loadData = async () => {
+      if (!isValidUUID(user.id)) {
+        setError('Invalid user ID');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError(null);
+        const docs = await DocumentService.getDocumentsWithDetails(user.id);
+        setDocuments(docs);
+        const sentDocs = await DocumentService.getSentDocuments(user.id);
+        setSentDocuments(
+          sentDocs.map((doc: Document) => ({
+            id: doc.id,
+            title: doc.title,
+            status: doc.status,
+            sentAt: doc.updated_at || doc.created_at,
+            recipients: doc.recipients.map((recipient) => ({
+              email: recipient.email,
+              name: recipient.name,
+              status: recipient.status,
+              signedAt: recipient.signatures?.[0]?.signed_at,
+              signingUrl: recipient.signing_url_token
+                ? `/sign/${doc.id}/${recipient.signing_url_token}`
+                : undefined,
+              accessLogs: [],
+            })),
+          }))
+        );
+      } catch (error: any) {
+        console.error('Error loading data:', error);
+        setError(error.message || 'Failed to load documents. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
   }, [user.id]);
 
-  // Function to fetch documents from DocumentService
-  const loadDocuments = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const docs = await DocumentService.getDocumentsWithDetails(user.id);
-      setDocuments(docs);
-    } catch (error: any) {
-      console.error('Error loading documents:', error);
-      setError(error.message || 'Failed to load documents. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const handleDownload = useCallback(
+    async (fileUrl: string, filename: string) => {
+      try {
+        const response = await fetch(fileUrl);
+        if (!response.ok) throw new Error('Failed to fetch document');
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      } catch (error: any) {
+        console.error('Error downloading document:', error);
+        alert(error.message || 'Failed to download document. Please try again.');
+      }
+    },
+    []
+  );
 
-  // Function to handle document download
-  const handleDownload = async (fileUrl: string, filename: string) => {
-    try {
-      const response = await fetch(fileUrl);
-      if (!response.ok) throw new Error('Failed to fetch document');
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-    } catch (error: any) {
-      console.error('Error downloading document:', error);
-      alert(error.message || 'Failed to download document. Please try again.');
+  const handleDocumentView = useCallback((fileUrl: string, documentId: string) => {
+    if (!isValidUUID(documentId)) {
+      alert('Invalid document ID');
+      return;
     }
-  };
-
-  // Function to handle document view
-  const handleDocumentView = (fileUrl: string, documentId: string) => {
     setSelectedDocument({ url: fileUrl, id: documentId });
     setShowDocumentViewer(true);
-  };
+  }, []);
 
-  // Mock template data
   const templates: Template[] = [
-    { id: '1', name: 'Non-Disclosure Agreement', category: 'Legal', description: 'Standard NDA template for confidential information', usage: 145 },
-    { id: '2', name: 'Service Agreement', category: 'Business', description: 'Professional services contract template', usage: 89 },
-    { id: '3', name: 'Employment Contract', category: 'HR', description: 'Full-time employment agreement template', usage: 67 },
-    { id: '4', name: 'Partnership Agreement', category: 'Business', description: 'Business partnership contract template', usage: 34 },
+    { id: '1', name: 'Non-Disclosure Agreement', category: 'Legal', description: 'Standard NDA template', usage: 145 },
+    { id: '2', name: 'Service Agreement', category: 'Business', description: 'Professional services contract', usage: 89 },
+    { id: '3', name: 'Employment Contract', category: 'HR', description: 'Full-time employment agreement', usage: 67 },
+    { id: '4', name: 'Partnership Agreement', category: 'Business', description: 'Business partnership contract', usage: 34 },
   ];
 
-  // Function to determine status color based on document status
-  const getStatusColor = (status: string) => {
+  const getStatusColor = useCallback((status: string) => {
     switch (status.toLowerCase()) {
       case 'completed':
         return 'bg-green-100 text-green-800';
@@ -227,10 +226,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
       default:
         return 'bg-gray-100 text-gray-800';
     }
-  };
+  }, []);
 
-  // Function to determine status icon based on document status
-  const getStatusIcon = (status: string) => {
+  const getStatusIcon = useCallback((status: string) => {
     switch (status.toLowerCase()) {
       case 'completed':
         return <CheckCircle className="w-4 h-4" />;
@@ -246,69 +244,94 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
       default:
         return <AlertCircle className="w-4 h-4" />;
     }
-  };
+  }, []);
 
-  // Filter templates based on search term
-  const filteredTemplates = templates.filter((template) =>
-    template.name.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredTemplates = useMemo(
+    () => templates.filter((template) => template.name.toLowerCase().includes(searchTerm.toLowerCase())),
+    [searchTerm]
   );
 
-  // Filter sent documents based on search term
-  const filteredSentDocuments = sentDocuments.filter((doc) =>
-    doc.title.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredSentDocuments = useMemo(
+    () => sentDocuments.filter((doc) => doc.title.toLowerCase().includes(searchTerm.toLowerCase())),
+    [sentDocuments, searchTerm]
   );
 
-  // Handle file selection from upload modal
-  const handleFileSelect = (file: UploadedFile) => {
+  const handleFileSelect = useCallback((file: UploadedFile) => {
     setSelectedFile(file);
     setShowUploadModal(false);
     setShowDocumentEditor(true);
-  };
+  }, []);
 
-  // Handle template viewing
-  const handleTemplateView = (template: Template) => {
+  const handleTemplateView = useCallback((template: Template) => {
     setSelectedTemplate(template);
     setShowTemplateViewer(true);
-  };
+  }, []);
 
-  // Handle template usage (opens editor with template content)
-  const handleTemplateUse = (template: Template) => {
+  const handleTemplateUse = useCallback((template: Template) => {
     setSelectedTemplate(template);
     setShowTemplateViewer(false);
     setShowDocumentEditor(true);
-  };
+  }, []);
 
-  // Handle document save and refresh document list
-  const handleDocumentSave = (fields: any[], documentData?: any) => {
-    console.log('Saving document with fields:', fields);
-    console.log('Document data:', documentData);
-    loadDocuments();
-    setShowDocumentEditor(false);
-    setSelectedFile(null);
-    setSelectedTemplate(null);
-  };
+  const handleDocumentSave = useCallback(
+    async (fields: any[], documentData?: any) => {
+      try {
+        if (!isValidUUID(user.id)) {
+          setError('Invalid user ID');
+          return;
+        }
+        await DocumentService.getDocumentsWithDetails(user.id);
+        const sentDocs = await DocumentService.getSentDocuments(user.id);
+        setSentDocuments(
+          sentDocs.map((doc: Document) => ({
+            id: doc.id,
+            title: doc.title,
+            status: doc.status,
+            sentAt: doc.updated_at || doc.created_at,
+            recipients: doc.recipients.map((recipient) => ({
+              email: recipient.email,
+              name: recipient.name,
+              status: recipient.status,
+              signedAt: recipient.signatures?.[0]?.signed_at,
+              signingUrl: recipient.signing_url_token
+                ? `/sign/${doc.id}/${recipient.signing_url_token}`
+                : undefined,
+              accessLogs: [],
+            })),
+          }))
+        );
+      } catch (error: any) {
+        console.error('Error refreshing documents:', error);
+        setError(error.message || 'Failed to refresh documents');
+      }
+      setShowDocumentEditor(false);
+      setSelectedFile(null);
+      setSelectedTemplate(null);
+    },
+    [user.id]
+  );
 
-  // Summarize recipient status for sent documents
-  const getRecipientStatusSummary = (recipients: SentDocument['recipients']) => {
+  const getRecipientStatusSummary = useCallback((recipients: SentDocument['recipients']) => {
     const signed = recipients.filter((r) => r.status === 'signed').length;
     const total = recipients.length;
     return `${signed}/${total} signed`;
-  };
+  }, []);
 
-  // Copy signing URL to clipboard
-  const copySigningUrl = (url: string) => {
+  const copySigningUrl = useCallback((url: string) => {
     const fullUrl = `${window.location.origin}${url}`;
-    navigator.clipboard.writeText(fullUrl).then(() => {
-      alert('Signing URL copied to clipboard!');
-    }).catch((err) => {
-      console.error('Failed to copy URL:', err);
-      alert('Failed to copy URL. Please try again.');
-    });
-  };
+    navigator.clipboard
+      .writeText(fullUrl)
+      .then(() => {
+        alert('Signing URL copied to clipboard!');
+      })
+      .catch((err) => {
+        console.error('Failed to copy URL:', err);
+        alert('Failed to copy URL. Please try again.');
+      });
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header section with gradient background */}
       <div className="bg-gradient-to-r from-blue-900 via-purple-900 to-indigo-900 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-6">
@@ -338,16 +361,11 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
         </div>
       </div>
 
-      {/* Main content area */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Error message */}
         {error && (
-          <div className="mb-6 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
-            {error}
-          </div>
+          <div className="mb-6 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">{error}</div>
         )}
 
-        {/* Summary cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="bg-white p-6 rounded-lg shadow-sm">
             <div className="flex items-center">
@@ -378,7 +396,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Completed</p>
-                <p className="text-2xl font-bold text-gray-900">{documents.filter((doc) => doc.status === 'completed').length}</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {documents.filter((doc) => doc.status === 'completed').length}
+                </p>
               </div>
             </div>
           </div>
@@ -389,39 +409,50 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Recipients</p>
-                <p className="text-2xl font-bold text-gray-900">{documents.reduce((sum, doc) => sum + (doc.recipients?.length || 0), 0)}</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {documents.reduce((sum, doc) => sum + (doc.recipients?.length || 0), 0)}
+                </p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Tabbed content area */}
         <div className="bg-white rounded-lg shadow-sm mb-6">
-          {/* Navigation tabs */}
           <div className="border-b border-gray-200">
             <nav className="flex space-x-8 px-6">
               <button
                 onClick={() => setActiveTab('documents')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'documents' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'documents'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
               >
                 Documents
               </button>
               <button
                 onClick={() => setActiveTab('sent')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'sent' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'sent'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
               >
                 Sent for Signature
               </button>
               <button
                 onClick={() => setActiveTab('templates')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'templates' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'templates'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
               >
                 Templates
               </button>
             </nav>
           </div>
 
-          {/* Search and filter bar */}
           <div className="p-6 border-b border-gray-200">
             <div className="flex items-center space-x-4">
               <div className="relative flex-1 max-w-md">
@@ -441,7 +472,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
             </div>
           </div>
 
-          {/* Tab content */}
           <div className="p-6">
             {activeTab === 'documents' ? (
               loading ? (
@@ -465,7 +495,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                   {documents
                     .filter((doc) => doc.title.toLowerCase().includes(searchTerm.toLowerCase()))
                     .map((doc) => (
-                      <div key={doc.id} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                      <div
+                        key={doc.id}
+                        className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                      >
                         <div className="flex items-center space-x-4">
                           <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
                             <FileText className="w-5 h-5 text-blue-600" />
@@ -473,7 +506,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                           <div>
                             <h3 className="font-medium text-gray-900">{doc.title}</h3>
                             <p className="text-sm text-gray-600">
-                              {doc.recipients?.length || 0} recipient{(doc.recipients?.length || 0) !== 1 ? 's' : ''} • {new Date(doc.created_at).toLocaleDateString()}
+                              {doc.recipients?.length || 0} recipient{(doc.recipients?.length || 0) !== 1 ? 's' : ''} •{' '}
+                              {new Date(doc.created_at).toLocaleDateString()}
                             </p>
                           </div>
                         </div>
@@ -523,8 +557,13 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                                       onClick={async () => {
                                         if (window.confirm('Are you sure you want to delete this document?')) {
                                           try {
+                                            if (!isValidUUID(doc.id)) {
+                                              alert('Invalid document ID');
+                                              return;
+                                            }
                                             await DocumentService.deleteDocument(doc.id);
-                                            await loadDocuments();
+                                            setDocuments(documents.filter((d) => d.id !== doc.id));
+                                            setSentDocuments(sentDocuments.filter((d) => d.id !== doc.id));
                                           } catch (error: any) {
                                             console.error('Error deleting document:', error);
                                             alert(error.message || 'Failed to delete document. Please try again.');
@@ -556,7 +595,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                   </div>
                 ) : (
                   filteredSentDocuments.map((doc) => (
-                    <div key={doc.id} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                    <div
+                      key={doc.id}
+                      className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center space-x-4">
                           <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
@@ -565,17 +607,30 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                           <div>
                             <h3 className="font-medium text-gray-900">{doc.title}</h3>
                             <p className="text-sm text-gray-600">
-                              Sent on {new Date(doc.sentAt).toLocaleDateString()} • {getRecipientStatusSummary(doc.recipients)}
+                              Sent on {new Date(doc.sentAt).toLocaleDateString()} •{' '}
+                              {getRecipientStatusSummary(doc.recipients)}
                             </p>
                           </div>
                         </div>
                         <div className="flex items-center space-x-4">
-                          <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(doc.status)}`}>
+                          <div
+                            className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(
+                              doc.status
+                            )}`}
+                          >
                             {getStatusIcon(doc.status)}
                             <span className="capitalize">{doc.status}</span>
                           </div>
-                          <button className="p-2 text-gray-400 hover:text-gray-600">
-                            <MoreHorizontal className="w-4 h-4" />
+                          <button
+                            onClick={() =>
+                              doc.recipients[0]?.signingUrl &&
+                              handleDocumentView(doc.recipients[0].signingUrl.replace(/\/sign\//, ''), doc.id)
+                            }
+                            disabled={!doc.recipients[0]?.signingUrl}
+                            className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="View document"
+                          >
+                            <Eye className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
@@ -602,7 +657,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                                     {recipient.status}
                                   </span>
                                   {recipient.signedAt && (
-                                    <span className="text-xs text-gray-500">Signed {new Date(recipient.signedAt).toLocaleDateString()}</span>
+                                    <span className="text-xs text-gray-500">
+                                      Signed {new Date(recipient.signedAt).toLocaleDateString()}
+                                    </span>
                                   )}
                                 </div>
                               </div>
@@ -620,26 +677,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                                   <code className="text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded block mt-1 truncate">
                                     {window.location.origin}{recipient.signingUrl}
                                   </code>
-                                </div>
-                              )}
-                              {recipient.accessLogs && recipient.accessLogs.length > 0 && (
-                                <div className="mt-2">
-                                  <details className="text-xs">
-                                    <summary className="cursor-pointer text-gray-700 font-medium hover:text-gray-900">
-                                      Access History ({recipient.accessLogs.length} events)
-                                    </summary>
-                                    <div className="mt-2 space-y-1 pl-4 border-l-2 border-gray-200">
-                                      {recipient.accessLogs.map((log, logIndex) => (
-                                        <div key={logIndex} className="text-xs text-gray-600">
-                                          <div className="flex items-center justify-between">
-                                            <span className="font-medium capitalize">{log.action.replace('_', ' ')}</span>
-                                            <span>{new Date(log.timestamp).toLocaleString()}</span>
-                                          </div>
-                                          <div className="text-gray-500">IP: {log.ipAddress} • {log.location}</div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </details>
                                 </div>
                               )}
                             </div>
@@ -660,7 +697,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                   </div>
                 ) : (
                   filteredTemplates.map((template) => (
-                    <div key={template.id} className="bg-gray-50 p-6 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
+                    <div
+                      key={template.id}
+                      className="bg-gray-50 p-6 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                    >
                       <div className="flex items-center justify-between mb-4">
                         <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
                           <FileText className="w-5 h-5 text-purple-600" />
@@ -696,12 +736,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
         </div>
       </div>
 
-      {/* Modals */}
       {showUploadModal && (
-        <DocumentUpload
-          onFileSelect={handleFileSelect}
-          onClose={() => setShowUploadModal(false)}
-        />
+        <DocumentUpload onFileSelect={handleFileSelect} onClose={() => setShowUploadModal(false)} />
       )}
 
       {showDocumentEditor && (
@@ -768,6 +804,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
 
       {showDocumentViewer && selectedDocument && (
         <DocumentViewer
+          key={selectedDocument.id}
           fileUrl={selectedDocument.url}
           documentId={selectedDocument.id}
           onClose={() => {
@@ -775,6 +812,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
             setSelectedDocument(null);
           }}
           isSigningEnabled={false}
+          fields={memoizedFields}
         />
       )}
 

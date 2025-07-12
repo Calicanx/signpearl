@@ -65,6 +65,41 @@ export class DocumentService {
     return data || [];
   }
 
+  static async getSentDocuments(userId: string): Promise<Document[]> {
+    if (!isValidUUID(userId)) {
+      throw new Error('Invalid user ID format');
+    }
+
+    const authSupabase = await getAuthenticatedClient();
+    const { data: { user } } = await authSupabase.auth.getUser();
+    if (!user || user.id !== userId) {
+      throw new Error('User does not have permission to view sent documents');
+    }
+
+    const { data, error } = await authSupabase
+      .from('documents')
+      .select(`
+        *,
+        recipients (
+          id,
+          email,
+          name,
+          status,
+          signing_url_token,
+          signatures (*)
+        )
+      `)
+      .eq('owner_id', userId)
+      .in('status', ['sent', 'signed', 'completed'])
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      console.error('Get sent documents error:', JSON.stringify(error, null, 2));
+      throw error;
+    }
+    return data || [];
+  }
+
   static async getDocument(documentId: string): Promise<Document | null> {
     if (!isValidUUID(documentId)) {
       return null;
@@ -345,7 +380,7 @@ export class DocumentService {
       throw new Error('Failed to generate public URL for the uploaded file');
     }
   
-    // Update document record (trigger will handle updated_at)
+    // Update document record
     const { error: updateError } = await authSupabase
       .from('documents')
       .update({ 
@@ -641,24 +676,7 @@ export class DocumentService {
       throw new Error('Invalid document ID format');
     }
 
-    const authSupabase = await getAuthenticatedClient();
-    const { data: document, error: docError } = await authSupabase
-      .from('documents')
-      .select('owner_id')
-      .eq('id', log.document_id)
-      .single();
-
-    if (docError || !document) {
-      console.error('Document validation error:', JSON.stringify(docError, null, 2));
-      throw new Error('Document not found');
-    }
-
-    const { data: { user } } = await authSupabase.auth.getUser();
-    if (!user || document.owner_id !== user.id) {
-      throw new Error('User does not have permission to log access for this document');
-    }
-
-    const { error } = await authSupabase
+    const { error } = await supabase
       .from('access_logs')
       .insert({
         ...log,
@@ -732,7 +750,8 @@ export class DocumentService {
           email,
           name,
           status,
-          signing_url_token
+          signing_url_token,
+          signatures (*)
         ),
         signature_fields (
           id,

@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+// Updated DocumentViewer with fixes
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { X, PenLine, Type, Image, Save, Calendar, TextCursorInput } from 'lucide-react';
 import { DocumentService } from '../services/documentService';
 import SignatureCanvas from 'react-signature-canvas';
 import { PDFDocument } from 'pdf-lib';
 
-// Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
 interface SignatureField {
@@ -28,10 +28,15 @@ interface DocumentViewerProps {
   documentId: string;
   onClose: () => void;
   recipientToken?: string;
-  onDocumentUpdated?: (newFileUrl: string) => void;
+  fields?: SignatureField[];
+  onDocumentUpdated?: (newFileUrl: string, fieldValues: Record<string, string>) => void;
+  isSigningEnabled?: boolean;
+  isFieldsDraggable?: boolean;
+  heading?: string;
 }
 
 const isValidUUID = (id: string): boolean => {
+  if (!id) return false;
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(id);
 };
@@ -41,13 +46,16 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
   documentId,
   onClose,
   recipientToken,
+  fields = [],
   onDocumentUpdated,
+  isSigningEnabled = false,
+  isFieldsDraggable = false,
+  heading = 'Document Viewer',
 }) => {
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [documentLoaded, setDocumentLoaded] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
-  const [signatureFields, setSignatureFields] = useState<SignatureField[]>([]);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [activeField, setActiveField] = useState<SignatureField | null>(null);
   const [showFieldEditor, setShowFieldEditor] = useState(false);
@@ -59,64 +67,32 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [savingDocument, setSavingDocument] = useState(false);
   const [pageDimensions, setPageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [renderedPageSize, setRenderedPageSize] = useState<{ width: number; height: number } | null>(null);
-  const [loadingFields, setLoadingFields] = useState(false);
   const [fieldsError, setFieldsError] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const signatureCanvasRef = useRef<SignatureCanvas>(null);
 
+  // Initialize field values only once
   useEffect(() => {
-    if (!documentId || !isValidUUID(documentId)) {
-      const errorMsg = !documentId ? 'Document ID is missing' : `Invalid document ID format: ${documentId}`;
-      console.warn('[DocumentViewer] Invalid document ID:', errorMsg);
-      setFieldsError(errorMsg);
-      setSignatureFields([]);
-      setLoadingFields(false);
-      return;
-    }
+    const initialValues: Record<string, string> = {};
+    fields.forEach((field) => {
+      initialValues[field.id] = field.signature_data || '';
+    });
+    setFieldValues(initialValues);
+  }, []); // Empty dependency array ensures this runs only once
 
-    const loadSignatureFields = async () => {
-      try {
-        console.log('[DocumentViewer] Loading signature fields for document:', documentId);
-        setLoadingFields(true);
-        setFieldsError(null);
-        const fields = await DocumentService.getSignatureFields(documentId);
-        console.log('[DocumentViewer] Loaded signature fields:', fields);
-        setSignatureFields(fields);
-        const initialValues: Record<string, string> = {};
-        fields.forEach((field) => {
-          initialValues[field.id] = field.signature_data || '';
-        });
-        setFieldValues(initialValues);
-      } catch (error: any) {
-        const errMsg = error.message || 'Failed to load signature fields';
-        console.error('[DocumentViewer] Error loading fields:', errMsg);
-        setFieldsError(errMsg);
-      } finally {
-        setLoadingFields(false);
-      }
-    };
-
-    loadSignatureFields();
-  }, [documentId]);
-
-  const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
-    console.log('[DocumentViewer] Document loaded successfully, pages:', numPages);
+  const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
     setDocumentLoaded(true);
     setDocumentError(null);
-  };
+  }, []);
 
-  const onDocumentLoadError = (error: Error) => {
+  const onDocumentLoadError = useCallback((error: Error) => {
     console.error('[DocumentViewer] Error loading PDF:', error);
     setDocumentError('Failed to load PDF document.');
     setDocumentLoaded(false);
-  };
+  }, []);
 
-  const handlePageRenderSuccess = (page: any) => {
-    console.log('[DocumentViewer] Page rendered:', page);
+  const handlePageRenderSuccess = useCallback((page: any) => {
     setPageDimensions({
       width: page._pageInfo.view[2],
       height: page._pageInfo.view[3],
@@ -125,98 +101,47 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
       width: page.width,
       height: page.height,
     });
-  };
+  }, []);
 
-  const handleFieldClick = (field: SignatureField) => {
-    if (!isValidUUID(documentId)) {
-      alert(`Cannot interact with fields: Invalid document ID (${documentId})`);
-      return;
-    }
+  const handleFieldClick = useCallback((field: SignatureField) => {
+    if (!isSigningEnabled) return;
     setActiveField(field);
     setEditorValue(fieldValues[field.id] || '');
     setShowFieldEditor(true);
     setSignatureType('draw');
     setTypedSignature('');
     setUploadedSignature(null);
-  };
+  }, [fieldValues, isSigningEnabled]);
 
-  const handleFieldMouseDown = (event: React.MouseEvent, fieldId: string) => {
-    if (!isValidUUID(documentId)) return;
-    
-    event.stopPropagation();
-    setSelectedFieldId(fieldId);
-    setIsDragging(true);
-    const field = signatureFields.find((f) => f.id === fieldId);
-    if (field && pageRef.current) {
-      const rect = pageRef.current.getBoundingClientRect();
-      setDragOffset({
-        x: event.clientX - rect.left - field.x_position,
-        y: event.clientY - rect.top - field.y_position,
-      });
-    }
-  };
-
-  const handleMouseMove = (event: React.MouseEvent) => {
-    if (!isDragging || !selectedFieldId || !pageRef.current || !pageDimensions || !renderedPageSize) return;
-
-    const pageRect = pageRef.current.getBoundingClientRect();
-    const newX = event.clientX - pageRect.left - dragOffset.x;
-    const newY = event.clientY - pageRect.top - dragOffset.y;
-    
-    // Calculate original coordinates based on rendered scale
-    const scaleX = renderedPageSize.width / pageDimensions.width;
-    const scaleY = renderedPageSize.height / pageDimensions.height;
-    const originalX = newX / scaleX;
-    const originalY = newY / scaleY;
-
-    setSignatureFields((prev) =>
-      prev.map((field) =>
-        field.id === selectedFieldId
-          ? { 
-              ...field, 
-              x_position: Math.max(0, originalX),
-              y_position: Math.max(0, originalY)
-            }
-          : field
-      )
-    );
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  const clearSignature = () => {
+  const clearSignature = useCallback(() => {
     if (signatureCanvasRef.current) {
       signatureCanvasRef.current.clear();
     }
     setTypedSignature('');
     setUploadedSignature(null);
     setEditorValue('');
-  };
+  }, []);
 
-  const handleSignatureUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSignatureUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onload = (e) => {
-        setUploadedSignature(e.target?.result as string);
-        setEditorValue(e.target?.result as string);
+        const result = e.target?.result as string;
+        setUploadedSignature(result);
+        setEditorValue(result);
       };
       reader.readAsDataURL(file);
     }
-  };
+  }, []);
 
-  const saveFieldValue = async () => {
-    if (!activeField || !isValidUUID(documentId)) {
-      if (!isValidUUID(documentId)) {
-        alert(`Cannot save field: Invalid document ID (${documentId})`);
-      }
-      return;
-    }
+  const saveFieldValue = useCallback(async () => {
+    if (!activeField || !isSigningEnabled) return;
+    
     setSavingField(true);
     try {
       let value = editorValue;
+      
       if (activeField.field_type === 'signature') {
         switch (signatureType) {
           case 'draw':
@@ -247,12 +172,22 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
             break;
         }
       }
+      
       if (value) {
-        setFieldValues((prev) => ({
-          ...prev,
+        const updatedFieldValues = {
+          ...fieldValues,
           [activeField.id]: value,
-        }));
-        await DocumentService.saveFieldValue(documentId, activeField.id, value, recipientToken);
+        };
+        setFieldValues(updatedFieldValues);
+        
+        if (isValidUUID(documentId)) {
+          await DocumentService.saveFieldValue(documentId, activeField.id, value, recipientToken);
+        }
+        
+        if (onDocumentUpdated) {
+          onDocumentUpdated(fileUrl, updatedFieldValues);
+        }
+        
         setShowFieldEditor(false);
         setActiveField(null);
         setEditorValue('');
@@ -263,25 +198,28 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     } finally {
       setSavingField(false);
     }
-  };
+  }, [activeField, editorValue, fieldValues, fileUrl, onDocumentUpdated, recipientToken, signatureType, typedSignature, uploadedSignature, isSigningEnabled, documentId]);
 
-  const saveUpdatedDocument = async () => {
-    if (!isValidUUID(documentId) || !fileUrl) {
-      alert('Cannot save document: Invalid document ID or file URL');
-      return;
-    }
+  const saveUpdatedDocument = useCallback(async () => {
+    if (!fileUrl || !isSigningEnabled) return;
+    
     setSavingDocument(true);
     try {
+      if (!isValidUUID(documentId)) {
+        throw new Error('Invalid document ID');
+      }
+      
       const updatedFileUrl = await DocumentService.generateAndUploadUpdatedPDF(
         documentId,
         fileUrl,
-        signatureFields,
+        fields,
         fieldValues,
         recipientToken
       );
+      
       alert('Document updated successfully!');
       if (onDocumentUpdated) {
-        onDocumentUpdated(updatedFileUrl);
+        onDocumentUpdated(updatedFileUrl, fieldValues);
       }
     } catch (error: any) {
       console.error('[DocumentViewer] Error saving updated PDF:', error);
@@ -289,9 +227,9 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     } finally {
       setSavingDocument(false);
     }
-  };
+  }, [documentId, fieldValues, fields, fileUrl, onDocumentUpdated, recipientToken, isSigningEnabled]);
 
-  const renderFieldContent = (field: SignatureField) => {
+  const renderFieldContent = useCallback((field: SignatureField) => {
     const value = fieldValues[field.id] || '';
     switch (field.field_type) {
       case 'signature':
@@ -324,10 +262,9 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
       default:
         return null;
     }
-  };
+  }, [fieldValues]);
 
-  // Calculate field positions based on rendered page scale
-  const calculateFieldPosition = (field: SignatureField) => {
+  const calculateFieldPosition = useCallback((field: SignatureField) => {
     if (!pageDimensions || !renderedPageSize) return { x: 0, y: 0, width: 0, height: 0 };
     
     const scaleX = renderedPageSize.width / pageDimensions.width;
@@ -337,33 +274,35 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
       x: field.x_position * scaleX,
       y: field.y_position * scaleY,
       width: field.width * scaleX,
-      height: field.height * scaleY
+      height: field.height * scaleY,
     };
-  };
+  }, [pageDimensions, renderedPageSize]);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl mx-4 max-h-[95vh] overflow-hidden flex flex-col">
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-xl font-bold text-gray-900">Document Editor</h2>
+          <h2 className="text-xl font-bold text-gray-900">{heading}</h2>
           <div className="flex items-center space-x-2">
-            <button
-              onClick={saveUpdatedDocument}
-              disabled={savingDocument || !isValidUUID(documentId)}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2 disabled:opacity-75"
-            >
-              {savingDocument ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  <span>Saving Document...</span>
-                </>
-              ) : (
-                <>
-                  <Save className="w-4 h-4" />
-                  <span>Save Document</span>
-                </>
-              )}
-            </button>
+            {isSigningEnabled && (
+              <button
+                onClick={saveUpdatedDocument}
+                disabled={savingDocument}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2 disabled:opacity-75"
+              >
+                {savingDocument ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>Saving Document...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>Save Document</span>
+                  </>
+                )}
+              </button>
+            )}
             <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-lg transition-colors">
               <X className="w-5 h-5" />
             </button>
@@ -390,22 +329,16 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 Next
               </button>
             </div>
-            <div className="text-sm text-gray-600">
-              Click fields to edit or drag to move
-            </div>
+            {isSigningEnabled && (
+              <div className="text-sm text-gray-600">
+                Click fields to sign or enter information
+              </div>
+            )}
           </div>
         )}
-        <div 
-          className="flex-1 overflow-auto bg-gray-100 p-8"
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-        >
+        <div className="flex-1 overflow-auto bg-gray-100 p-8">
           <div className="max-w-4xl mx-auto">
-            <div 
-              ref={pageRef} 
-              className="relative bg-white shadow-lg min-h-[600px]"
-              style={{ cursor: isDragging ? 'grabbing' : 'default' }}
-            >
+            <div ref={pageRef} className="relative bg-white shadow-lg min-h-[600px]">
               {documentError ? (
                 <div className="flex items-center justify-center h-96 text-red-600 p-8">
                   <div className="text-center">
@@ -444,21 +377,19 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
                       renderAnnotationLayer={false}
                     />
                   </Document>
-                  
                   {/* Signature fields overlay */}
                   {documentLoaded && pageDimensions && renderedPageSize && (
-                    signatureFields
+                    fields
                       .filter((field) => field.page_number === currentPage)
                       .map((field) => {
                         const { x, y, width, height } = calculateFieldPosition(field);
-                        
                         return (
                           <div
                             key={field.id}
                             className={`absolute border-2 flex items-center justify-center text-xs font-medium select-none ${
-                              selectedFieldId === field.id
-                                ? 'border-blue-500 bg-blue-100 text-blue-700'
-                                : 'border-gray-400 bg-gray-100 text-gray-600'
+                              isSigningEnabled
+                                ? 'border-blue-500 bg-blue-100 text-blue-700 cursor-pointer'
+                                : 'border-gray-400 bg-gray-100 text-gray-600 cursor-default'
                             }`}
                             style={{
                               left: `${x}px`,
@@ -466,8 +397,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
                               width: `${width}px`,
                               height: `${height}px`,
                             }}
-                            onClick={() => handleFieldClick(field)}
-                            onMouseDown={(e) => handleFieldMouseDown(e, field.id)}
+                            onClick={() => isSigningEnabled && handleFieldClick(field)}
                           >
                             {renderFieldContent(field)}
                             {field.required && !fieldValues[field.id] && (
@@ -486,21 +416,10 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   </div>
                 </div>
               )}
-              {loadingFields && (
-                <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-blue-100 text-blue-700 px-4 py-2 rounded-md flex items-center">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                  Loading signature fields...
-                </div>
-              )}
-              {fieldsError && !loadingFields && (
-                <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-                  {fieldsError}
-                </div>
-              )}
-              {!loadingFields && !fieldsError && signatureFields.length === 0 && (
+              {fields.length === 0 && (
                 <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded">
                   {isValidUUID(documentId)
-                    ? 'No signature fields found for this document'
+                    ? 'No signature fields available for this document'
                     : 'Invalid document ID format - unable to load fields'}
                 </div>
               )}
@@ -508,7 +427,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
           </div>
         </div>
       </div>
-      {showFieldEditor && activeField && (
+      {showFieldEditor && activeField && isSigningEnabled && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4">
             <div className="p-6 border-b border-gray-200">
@@ -645,7 +564,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   </button>
                   <button
                     onClick={saveFieldValue}
-                    disabled={savingField || !isValidUUID(documentId)}
+                    disabled={savingField}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2 disabled:opacity-75"
                   >
                     {savingField ? (
