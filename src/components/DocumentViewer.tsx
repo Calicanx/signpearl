@@ -1,4 +1,3 @@
-// Updated DocumentViewer with fixes
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { X, PenLine, Type, Image, Save, Calendar, TextCursorInput } from 'lucide-react';
@@ -28,6 +27,7 @@ interface DocumentViewerProps {
   documentId: string;
   onClose: () => void;
   recipientToken?: string;
+  recipientEmail?: string;
   fields?: SignatureField[];
   onDocumentUpdated?: (newFileUrl: string, fieldValues: Record<string, string>) => void;
   isSigningEnabled?: boolean;
@@ -36,7 +36,6 @@ interface DocumentViewerProps {
 }
 
 const isValidUUID = (id: string): boolean => {
-  if (!id) return false;
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(id);
 };
@@ -46,6 +45,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
   documentId,
   onClose,
   recipientToken,
+  recipientEmail,
   fields = [],
   onDocumentUpdated,
   isSigningEnabled = false,
@@ -67,18 +67,17 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [savingDocument, setSavingDocument] = useState(false);
   const [pageDimensions, setPageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [renderedPageSize, setRenderedPageSize] = useState<{ width: number; height: number } | null>(null);
-  const [fieldsError, setFieldsError] = useState<string | null>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const signatureCanvasRef = useRef<SignatureCanvas>(null);
 
-  // Initialize field values only once
+  // Initialize field values
   useEffect(() => {
     const initialValues: Record<string, string> = {};
     fields.forEach((field) => {
-      initialValues[field.id] = field.signature_data || '';
+      initialValues[field.id] = field.signature_data || field.defaultValue || '';
     });
     setFieldValues(initialValues);
-  }, []); // Empty dependency array ensures this runs only once
+  }, [fields]);
 
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
@@ -103,15 +102,27 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     });
   }, []);
 
-  const handleFieldClick = useCallback((field: SignatureField) => {
-    if (!isSigningEnabled) return;
-    setActiveField(field);
-    setEditorValue(fieldValues[field.id] || '');
-    setShowFieldEditor(true);
-    setSignatureType('draw');
-    setTypedSignature('');
-    setUploadedSignature(null);
-  }, [fieldValues, isSigningEnabled]);
+  const isFieldEditable = useCallback(
+    (field: SignatureField) => {
+      if (!isSigningEnabled) return false;
+      if (!recipientToken || !recipientEmail) return true; // Allow editing for authenticated users
+      return field.assigned_to === null || field.assigned_to === recipientEmail;
+    },
+    [isSigningEnabled, recipientToken, recipientEmail]
+  );
+
+  const handleFieldClick = useCallback(
+    (field: SignatureField) => {
+      if (!isFieldEditable(field)) return;
+      setActiveField(field);
+      setEditorValue(fieldValues[field.id] || field.defaultValue || '');
+      setShowFieldEditor(true);
+      setSignatureType('draw');
+      setTypedSignature('');
+      setUploadedSignature(null);
+    },
+    [fieldValues, isFieldEditable]
+  );
 
   const clearSignature = useCallback(() => {
     if (signatureCanvasRef.current) {
@@ -136,16 +147,16 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
   }, []);
 
   const saveFieldValue = useCallback(async () => {
-    if (!activeField || !isSigningEnabled) return;
-    
+    if (!activeField || !isFieldEditable(activeField)) return;
+
     setSavingField(true);
     try {
       let value = editorValue;
-      
+
       if (activeField.field_type === 'signature') {
         switch (signatureType) {
           case 'draw':
-            if (signatureCanvasRef.current) {
+            if (signatureCanvasRef.current && !signatureCanvasRef.current.isEmpty()) {
               value = signatureCanvasRef.current.getTrimmedCanvas().toDataURL();
             }
             break;
@@ -172,25 +183,27 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
             break;
         }
       }
-      
+
       if (value) {
         const updatedFieldValues = {
           ...fieldValues,
           [activeField.id]: value,
         };
         setFieldValues(updatedFieldValues);
-        
-        if (isValidUUID(documentId)) {
+
+        if (isValidUUID(documentId) && recipientToken) {
           await DocumentService.saveFieldValue(documentId, activeField.id, value, recipientToken);
         }
-        
+
         if (onDocumentUpdated) {
           onDocumentUpdated(fileUrl, updatedFieldValues);
         }
-        
+
         setShowFieldEditor(false);
         setActiveField(null);
         setEditorValue('');
+      } else {
+        throw new Error('No valid input provided for the field');
       }
     } catch (error: any) {
       console.error('[DocumentViewer] Error saving field value:', error);
@@ -198,25 +211,37 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     } finally {
       setSavingField(false);
     }
-  }, [activeField, editorValue, fieldValues, fileUrl, onDocumentUpdated, recipientToken, signatureType, typedSignature, uploadedSignature, isSigningEnabled, documentId]);
+  }, [
+    activeField,
+    editorValue,
+    fieldValues,
+    fileUrl,
+    onDocumentUpdated,
+    recipientToken,
+    signatureType,
+    typedSignature,
+    uploadedSignature,
+    documentId,
+    isFieldEditable,
+  ]);
 
   const saveUpdatedDocument = useCallback(async () => {
-    if (!fileUrl || !isSigningEnabled) return;
-    
+    if (!fileUrl || !isSigningEnabled || !recipientToken) return;
+
     setSavingDocument(true);
     try {
       if (!isValidUUID(documentId)) {
         throw new Error('Invalid document ID');
       }
-      
+
       const updatedFileUrl = await DocumentService.generateAndUploadUpdatedPDF(
         documentId,
         fileUrl,
-        fields,
+        fields.filter(field => isFieldEditable(field)),
         fieldValues,
         recipientToken
       );
-      
+
       alert('Document updated successfully!');
       if (onDocumentUpdated) {
         onDocumentUpdated(updatedFileUrl, fieldValues);
@@ -229,54 +254,61 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     }
   }, [documentId, fieldValues, fields, fileUrl, onDocumentUpdated, recipientToken, isSigningEnabled]);
 
-  const renderFieldContent = useCallback((field: SignatureField) => {
-    const value = fieldValues[field.id] || '';
-    switch (field.field_type) {
-      case 'signature':
-        return value ? (
-          <img src={value} alt="Signature" className="w-full h-full object-contain" />
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full">
-            <PenLine className="w-5 h-5 mb-1 text-blue-600" />
-            <span className="text-xs">Click to sign</span>
-          </div>
-        );
-      case 'text':
-        return value ? (
-          <div className="p-1 text-sm overflow-hidden text-ellipsis">{value}</div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full">
-            <TextCursorInput className="w-5 h-5 mb-1 text-blue-600" />
-            <span className="text-xs">Click to enter text</span>
-          </div>
-        );
-      case 'date':
-        return value ? (
-          <div className="p-1 text-sm">{value}</div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full">
-            <Calendar className="w-5 h-5 mb-1 text-blue-600" />
-            <span className="text-xs">Click to select date</span>
-          </div>
-        );
-      default:
-        return null;
-    }
-  }, [fieldValues]);
+  const renderFieldContent = useCallback(
+    (field: SignatureField) => {
+      const value = fieldValues[field.id] || '';
+      const editable = isFieldEditable(field);
+      switch (field.field_type) {
+        case 'signature':
+          return value ? (
+            <img src={value} alt="Signature" className="w-full h-full object-contain" />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full">
+              <PenLine className="w-5 h-5 mb-1 text-blue-600" />
+              <span className="text-xs">{editable ? 'Click to sign' : 'Signed by another user'}</span>
+            </div>
+          );
+        case 'text':
+          return value ? (
+            <div className="p-1 text-sm overflow-hidden text-ellipsis">{value}</div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full">
+              <TextCursorInput className="w-5 h-5 mb-1 text-blue-600" />
+              <span className="text-xs">{editable ? 'Click to enter text' : 'Filled by another user'}</span>
+            </div>
+          );
+        case 'date':
+          return value ? (
+            <div className="p-1 text-sm">{value}</div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full">
+              <Calendar className="w-5 h-5 mb-1 text-blue-600" />
+              <span className="text-xs">{editable ? 'Click to select date' : 'Filled by another user'}</span>
+            </div>
+          );
+        default:
+          return null;
+      }
+    },
+    [fieldValues, isFieldEditable]
+  );
 
-  const calculateFieldPosition = useCallback((field: SignatureField) => {
-    if (!pageDimensions || !renderedPageSize) return { x: 0, y: 0, width: 0, height: 0 };
-    
-    const scaleX = renderedPageSize.width / pageDimensions.width;
-    const scaleY = renderedPageSize.height / pageDimensions.height;
-    
-    return {
-      x: field.x_position * scaleX,
-      y: field.y_position * scaleY,
-      width: field.width * scaleX,
-      height: field.height * scaleY,
-    };
-  }, [pageDimensions, renderedPageSize]);
+  const calculateFieldPosition = useCallback(
+    (field: SignatureField) => {
+      if (!pageDimensions || !renderedPageSize) return { x: 0, y: 0, width: 0, height: 0 };
+
+      const scaleX = renderedPageSize.width / pageDimensions.width;
+      const scaleY = renderedPageSize.height / pageDimensions.height;
+
+      return {
+        x: field.x_position * scaleX,
+        y: field.y_position * scaleY,
+        width: field.width * scaleX,
+        height: field.height * scaleY,
+      };
+    },
+    [pageDimensions, renderedPageSize]
+  );
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -383,11 +415,12 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
                       .filter((field) => field.page_number === currentPage)
                       .map((field) => {
                         const { x, y, width, height } = calculateFieldPosition(field);
+                        const editable = isFieldEditable(field);
                         return (
                           <div
                             key={field.id}
                             className={`absolute border-2 flex items-center justify-center text-xs font-medium select-none ${
-                              isSigningEnabled
+                              editable
                                 ? 'border-blue-500 bg-blue-100 text-blue-700 cursor-pointer'
                                 : 'border-gray-400 bg-gray-100 text-gray-600 cursor-default'
                             }`}
@@ -397,7 +430,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
                               width: `${width}px`,
                               height: `${height}px`,
                             }}
-                            onClick={() => isSigningEnabled && handleFieldClick(field)}
+                            onClick={() => editable && handleFieldClick(field)}
                           >
                             {renderFieldContent(field)}
                             {field.required && !fieldValues[field.id] && (
@@ -427,7 +460,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
           </div>
         </div>
       </div>
-      {showFieldEditor && activeField && isSigningEnabled && (
+      {showFieldEditor && activeField && isFieldEditable(activeField) && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4">
             <div className="p-6 border-b border-gray-200">

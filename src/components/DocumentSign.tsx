@@ -31,16 +31,17 @@ const DocumentSign: React.FC = () => {
     fileUrl: string;
     id: string;
     fields: SignatureField[];
+    recipientEmail: string;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Memoize fields to prevent unnecessary re-renders
   const memoizedFields = useMemo(() => documentData?.fields || [], [documentData?.fields]);
 
   useEffect(() => {
     const fetchDocument = async () => {
-      if (!documentId || !token || !isValidUUID(documentId) || !isValidUUID(token)) {
+      if (!documentId || !token || !isValidUUID(documentId)) {
+        console.error('Invalid document ID or token:', { documentId, token });
         setError('Invalid document ID or token');
         setLoading(false);
         return;
@@ -49,27 +50,34 @@ const DocumentSign: React.FC = () => {
       try {
         setLoading(true);
         const result = await DocumentService.getDocumentForSigning(documentId, token);
-        if (!result || !result.document.file_url) {
+        if (!result) {
           throw new Error('Document not found or invalid token');
         }
-        const unsignedFields = (result.fields || []).filter((field) => !field.signature_data);
+        if (!result.document.file_url) {
+          throw new Error('Document missing file URL');
+        }
         setDocumentData({
           fileUrl: result.document.file_url,
           id: result.document.id,
-          fields: unsignedFields,
+          fields: result.fields.map(field => ({
+            ...field,
+            signature_data: field.signature_data || null,
+          })),
+          recipientEmail: result.recipient.email,
         });
-        await DocumentService.logAccess({
-          document_id: documentId,
-          recipient_id: result.recipient.id,
-          action: 'document_viewed',
-          ip_address: 'unknown',
-          user_agent: navigator.userAgent,
-          location: 'unknown',
-        });
-        await DocumentService.updateRecipientStatus(result.recipient.id, 'viewed');
+        await DocumentService.logAccessWithToken(token, 'document_viewed', 'unknown', navigator.userAgent, 'unknown');
+        await DocumentService.updateRecipientStatusWithToken(token, 'viewed');
       } catch (err: any) {
-        console.error('Error fetching document:', err);
-        setError(err.message || 'Failed to load document');
+        console.error('Error fetching document:', JSON.stringify({ message: err.message, stack: err.stack }, null, 2));
+        if (err.message.includes('Invalid or expired token')) {
+          setError('The signing link is invalid or has expired. Please request a new link.');
+        } else if (err.message.includes('Document not found')) {
+          setError('The requested document could not be found.');
+        } else if (err.message.includes('Document missing file URL')) {
+          setError('The document is missing a valid file URL. Please contact support.');
+        } else {
+          setError(`Failed to load document: ${err.message || 'Unknown error'}`);
+        }
       } finally {
         setLoading(false);
       }
@@ -86,26 +94,15 @@ const DocumentSign: React.FC = () => {
       }
 
       try {
-        const recipient = await DocumentService.getRecipientByToken(token);
-        if (recipient) {
-          await DocumentService.updateRecipientStatus(recipient.id, 'signed');
-          await DocumentService.logAccess({
-            document_id: documentId!,
-            recipient_id: recipient.id,
-            action: 'document_signed',
-            ip_address: 'unknown',
-            user_agent: navigator.userAgent,
-            location: 'unknown',
-          });
-        }
+        await DocumentService.updateRecipientStatusWithToken(token, 'signed');
+        await DocumentService.logAccessWithToken(token, 'document_signed', 'unknown', navigator.userAgent, 'unknown');
         setDocumentData((prev) => {
           if (!prev) return prev;
-          const updatedFields = prev.fields.filter((field) => !fieldValues[field.id]);
-          return { ...prev, fileUrl: newFileUrl, fields: updatedFields };
+          return { ...prev, fileUrl: newFileUrl };
         });
       } catch (err: any) {
-        console.error('Error updating document:', err);
-        setError('Failed to update document');
+        console.error('Error updating document:', JSON.stringify({ message: err.message, stack: err.stack }, null, 2));
+        setError(`Failed to update document: ${err.message || 'Unknown error'}`);
       }
     },
     [documentData, token, documentId]
@@ -138,8 +135,9 @@ const DocumentSign: React.FC = () => {
     <DocumentViewer
       key={documentData.id}
       fileUrl={documentData.fileUrl}
-      documentId={documentData.id}
+      documentId={documentId}
       recipientToken={token}
+      recipientEmail={documentData.recipientEmail}
       fields={memoizedFields}
       onClose={() => window.close()}
       onDocumentUpdated={handleDocumentUpdated}

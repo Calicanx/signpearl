@@ -36,7 +36,7 @@ export class DocumentService {
 
     if (error) {
       console.error('Create document error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to create document: ${error.message}`);
     }
     return data;
   }
@@ -60,7 +60,7 @@ export class DocumentService {
 
     if (error) {
       console.error('Get documents error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to fetch documents: ${error.message}`);
     }
     return data || [];
   }
@@ -95,19 +95,21 @@ export class DocumentService {
 
     if (error) {
       console.error('Get sent documents error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to fetch sent documents: ${error.message}`);
     }
     return data || [];
   }
 
   static async getDocument(documentId: string): Promise<Document | null> {
     if (!isValidUUID(documentId)) {
+      console.error('Invalid document ID format:', documentId);
       return null;
     }
 
     const authSupabase = await getAuthenticatedClient();
     const { data: { user } } = await authSupabase.auth.getUser();
     if (!user) {
+      console.error('No authenticated user found');
       throw new Error('User must be authenticated to view this document');
     }
 
@@ -119,9 +121,12 @@ export class DocumentService {
       .single();
 
     if (error) {
-      if (error.code === 'PGRST116') return null;
+      if (error.code === 'PGRST116') {
+        console.warn('Document not found for ID:', documentId);
+        return null;
+      }
       console.error('Get document error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to fetch document: ${error.message}`);
     }
     return data;
   }
@@ -157,7 +162,7 @@ export class DocumentService {
 
     if (error) {
       console.error('Update document error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to update document: ${error.message}`);
     }
     return data;
   }
@@ -191,7 +196,7 @@ export class DocumentService {
 
     if (error) {
       console.error('Delete document error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to delete document: ${error.message}`);
     }
   }
 
@@ -257,8 +262,8 @@ export class DocumentService {
 
       return urlData.publicUrl;
     } catch (error: any) {
-      console.error('Error in uploadDocumentFile:', error);
-      throw error;
+      console.error('Error in uploadDocumentFile:', JSON.stringify(error, null, 2));
+      throw new Error(`Failed to upload document file: ${error.message}`);
     }
   }
 
@@ -275,43 +280,54 @@ export class DocumentService {
         throw new Error('Invalid document ID format');
       }
 
-      // Permission check
+      let ownerId: string | null = null;
       if (token) {
         const recipient = await this.getRecipientByToken(token);
         if (!recipient || recipient.document_id !== documentId) {
           throw new Error('Invalid or expired signing token');
         }
+        const { data: document } = await authSupabase
+          .from('documents')
+          .select('owner_id')
+          .eq('id', documentId)
+          .single();
+        if (!document) throw new Error('Document not found');
+        ownerId = document.owner_id;
       } else {
         const { data: document } = await authSupabase
           .from('documents')
           .select('owner_id')
           .eq('id', documentId)
           .single();
-        
         if (!document) throw new Error('Document not found');
-        
         const { data: { user } } = await authSupabase.auth.getUser();
         if (!user || document.owner_id !== user.id) {
           throw new Error('User does not have permission to update this document');
         }
+        ownerId = user.id;
       }
 
-      // Load and modify PDF
       const response = await fetch(originalFileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch PDF: ${response.statusText}`);
+      }
       const pdfBytes = await response.arrayBuffer();
       const pdfDoc = await PDFDocument.load(pdfBytes);
       const pages = pdfDoc.getPages();
 
-      // Apply field values to PDF
       for (const field of fields) {
         const value = fieldValues[field.id];
         if (!value) continue;
 
         const page = pages[field.page_number - 1];
+        if (!page) continue;
         const { width: pageWidth, height: pageHeight } = page.getSize();
 
         if (field.field_type === 'signature') {
-          const imgBytes = await fetch(value).then((res) => res.arrayBuffer());
+          const imgBytes = await fetch(value).then((res) => {
+            if (!res.ok) throw new Error(`Failed to fetch signature image: ${res.statusText}`);
+            return res.arrayBuffer();
+          });
           let img;
           try {
             img = await pdfDoc.embedPng(imgBytes);
@@ -335,30 +351,33 @@ export class DocumentService {
         }
       }
 
-      // Save and upload modified PDF
       const pdfBytesUpdated = await pdfDoc.save();
-      return await this.uploadModifiedDocument(documentId, pdfBytesUpdated);
+      return await this.uploadModifiedDocument(documentId, pdfBytesUpdated, ownerId, token);
     } catch (error: any) {
-      console.error('Error in generateAndUploadUpdatedPDF:', error);
+      console.error('Error in generateAndUploadUpdatedPDF:', JSON.stringify(error, null, 2));
       throw new Error(`Failed to generate and upload updated PDF: ${error.message}`);
     }
   }
 
   static async uploadModifiedDocument(
     documentId: string,
-    pdfBytes: Uint8Array
+    pdfBytes: Uint8Array,
+    ownerId: string,
+    token?: string
   ): Promise<string> {
-    const authSupabase = await getAuthenticatedClient();
-    const { data: { user } } = await authSupabase.auth.getUser();
-    
-    if (!user) {
-      throw new Error('User must be authenticated to upload documents');
+    const authSupabase = token ? supabase : await getAuthenticatedClient();
+
+    if (!isValidUUID(documentId)) {
+      throw new Error('Invalid document ID format');
     }
-  
-    const filePath = `${user.id}/documents/${documentId}/${uuidv4()}.pdf`;
+
+    if (!ownerId) {
+      throw new Error('Owner ID is required to upload documents');
+    }
+
+    const filePath = `${ownerId}/documents/${documentId}/${uuidv4()}.pdf`;
     const file = new File([pdfBytes], 'signed-document.pdf', { type: 'application/pdf' });
-  
-    // Upload to storage
+
     const { error: uploadError } = await authSupabase.storage
       .from('documents')
       .upload(filePath, file, {
@@ -366,32 +385,33 @@ export class DocumentService {
         upsert: true,
         cacheControl: '3600',
       });
-  
+
     if (uploadError) {
+      console.error('Upload error:', JSON.stringify(uploadError, null, 2));
       throw new Error(`Failed to upload file: ${uploadError.message}`);
     }
-  
-    // Get public URL
+
     const { data: urlData } = authSupabase.storage
       .from('documents')
       .getPublicUrl(filePath);
-  
+
     if (!urlData?.publicUrl) {
       throw new Error('Failed to generate public URL for the uploaded file');
     }
-  
-    // Update document record
+
     const { error: updateError } = await authSupabase
       .from('documents')
-      .update({ 
-        file_url: urlData.publicUrl
+      .update({
+        file_url: urlData.publicUrl,
+        updated_at: new Date().toISOString(),
       })
       .eq('id', documentId);
-  
+
     if (updateError) {
+      console.error('Update document error:', JSON.stringify(updateError, null, 2));
       throw new Error(`Failed to update document: ${updateError.message}`);
     }
-  
+
     return urlData.publicUrl;
   }
 
@@ -428,7 +448,7 @@ export class DocumentService {
 
     if (error) {
       console.error('Add recipients error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to add recipients: ${error.message}`);
     }
     return data || [];
   }
@@ -462,12 +482,17 @@ export class DocumentService {
 
     if (error) {
       console.error('Get recipients error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to fetch recipients: ${error.message}`);
     }
     return data || [];
   }
 
   static async getRecipientByToken(token: string): Promise<Recipient | null> {
+    if (!token) {
+      console.error('Token is required');
+      return null;
+    }
+
     const { data, error } = await supabase
       .from('recipients')
       .select('*')
@@ -476,9 +501,12 @@ export class DocumentService {
       .single();
 
     if (error) {
-      if (error.code === 'PGRST116') return null;
+      if (error.code === 'PGRST116') {
+        console.warn('No recipient found for token:', token);
+        return null;
+      }
       console.error('Get recipient by token error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to fetch recipient: ${error.message}`);
     }
     return data;
   }
@@ -518,12 +546,12 @@ export class DocumentService {
 
     const { error } = await authSupabase
       .from('recipients')
-      .update({ status })
+      .update({ status, updated_at: new Date().toISOString() })
       .eq('id', recipientId);
 
     if (error) {
       console.error('Update recipient status error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to update recipient status: ${error.message}`);
     }
   }
 
@@ -569,7 +597,7 @@ export class DocumentService {
         signature_data: field.signature_data || null
       })) || [];
     } catch (error: any) {
-      console.error('Unexpected error in saveSignatureFields:', error);
+      console.error('Unexpected error in saveSignatureFields:', JSON.stringify(error, null, 2));
       throw new Error(`Failed to save signature fields: ${error.message || 'Unknown error'}`);
     }
   }
@@ -613,6 +641,7 @@ export class DocumentService {
           .single();
 
         if (docError || !document) {
+          console.error('Document validation error:', JSON.stringify(docError, null, 2));
           throw new Error('Document not found');
         }
 
@@ -629,11 +658,12 @@ export class DocumentService {
         .eq('document_id', documentId);
 
       if (error) {
-        throw new Error('Failed to save signature');
+        console.error('Save signature error:', JSON.stringify(error, null, 2));
+        throw new Error(`Failed to save signature: ${error.message}`);
       }
     } catch (error: any) {
-      console.error('Error in saveSignatureForField:', error);
-      throw new Error('Failed to save signature');
+      console.error('Error in saveSignatureForField:', JSON.stringify(error, null, 2));
+      throw new Error(`Failed to save signature: ${error.message}`);
     }
   }
 
@@ -659,7 +689,8 @@ export class DocumentService {
         .eq('document_id', documentId);
 
       if (error) {
-        throw error;
+        console.error('Get signature fields error:', JSON.stringify(error, null, 2));
+        throw new Error(`Failed to fetch signature fields: ${error.message}`);
       }
 
       return data?.map(field => ({
@@ -667,6 +698,7 @@ export class DocumentService {
         signature_data: field.signature_data || null
       })) || [];
     } catch (error: any) {
+      console.error('Error in getSignatureFields:', JSON.stringify(error, null, 2));
       throw new Error(`Failed to retrieve signature fields: ${error.message || 'Unknown error'}`);
     }
   }
@@ -685,7 +717,7 @@ export class DocumentService {
 
     if (error) {
       console.error('Log access error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to log access: ${error.message}`);
     }
   }
 
@@ -725,7 +757,7 @@ export class DocumentService {
 
     if (error) {
       console.error('Get access logs error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to fetch access logs: ${error.message}`);
     }
     return data || [];
   }
@@ -764,7 +796,7 @@ export class DocumentService {
 
     if (error) {
       console.error('Get documents with details error:', JSON.stringify(error, null, 2));
-      throw error;
+      throw new Error(`Failed to fetch documents with details: ${error.message}`);
     }
     return data || [];
   }
@@ -776,46 +808,106 @@ export class DocumentService {
   } | null> {
     try {
       if (!isValidUUID(documentId)) {
-        return null;
+        console.error('Invalid document ID format:', documentId);
+        throw new Error('Invalid document ID format');
       }
 
-      const recipient = await this.getRecipientByToken(token);
-      if (!recipient || recipient.document_id !== documentId) {
-        return null;
+      if (!token) {
+        console.error('Token is required');
+        throw new Error('Token is required');
       }
 
-      const { data: document, error: docError } = await supabase
-        .from('documents')
+      // Fetch recipient to verify token
+      const { data: recipientData, error: recipientError } = await supabase
+        .from('recipients')
         .select('*')
-        .eq('id', documentId)
+        .eq('signing_url_token', token)
+        .gt('token_expiry', new Date().toISOString())
         .single();
 
-      if (docError) {
-        console.error('Error fetching document:', JSON.stringify(docError, null, 2));
-        return null;
+      if (recipientError || !recipientData) {
+        console.error('Error fetching recipient:', JSON.stringify(recipientError, null, 2));
+        throw new Error(recipientError?.message || 'Invalid or expired token');
       }
 
-      const { data: fields, error: fieldsError } = await supabase
-        .from('signature_fields')
-        .select('*')
-        .eq('document_id', documentId);
+      const recipient = recipientData as Recipient;
+      if (recipient.document_id !== documentId) {
+        console.error('Recipient document_id does not match:', {
+          recipientDocumentId: recipient.document_id,
+          providedDocumentId: documentId,
+        });
+        throw new Error('Document ID does not match recipient');
+      }
+
+      // Fetch document using database function
+      const { data: documentData, error: documentError } = await supabase
+        .rpc('get_document_for_signing_v2', { p_document_id: documentId, p_token: token });
+
+      if (documentError || !documentData) {
+        console.error('Error fetching document:', JSON.stringify(documentError, null, 2));
+        throw new Error(documentError?.message || 'Document not found');
+      }
+
+      const document = documentData as Document;
+      if (!document.file_url) {
+        console.error('Document missing file_url:', documentId);
+        throw new Error('Document missing file URL');
+      }
+
+      // Fetch signature fields using database function
+      const { data: fieldsData, error: fieldsError } = await supabase
+        .rpc('get_signature_fields_for_signing_v2', { p_document_id: documentId, p_token: token });
 
       if (fieldsError) {
         console.error('Error fetching signature fields:', JSON.stringify(fieldsError, null, 2));
-        return null;
+        throw new Error(`Failed to fetch signature fields: ${fieldsError.message}`);
       }
+
+      const fields = fieldsData ? (fieldsData as SignatureField[]) : [];
 
       return {
         document,
         recipient,
-        fields: fields?.map(field => ({
+        fields: fields.map(field => ({
           ...field,
-          signature_data: field.signature_data || null
-        })) || [],
+          signature_data: field.signature_data || null,
+        })),
       };
     } catch (error: any) {
-      console.error('Error in getDocumentForSigning:', error);
-      return null;
+      console.error('Error in getDocumentForSigning:', JSON.stringify({ message: error.message, stack: error.stack }, null, 2));
+      throw new Error(`Failed to fetch document for signing: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  static async updateRecipientStatusWithToken(token: string, status: 'pending' | 'viewed' | 'signed'): Promise<void> {
+    if (!token) {
+      throw new Error('Token is required');
+    }
+
+    const { error } = await supabase.rpc('update_recipient_status_v2', { p_token: token, p_status: status });
+
+    if (error) {
+      console.error('Update recipient status error:', JSON.stringify(error, null, 2));
+      throw new Error(`Failed to update recipient status: ${error.message}`);
+    }
+  }
+
+  static async logAccessWithToken(token: string, action: string, ip_address: string, user_agent: string, location: string): Promise<void> {
+    if (!token) {
+      throw new Error('Token is required');
+    }
+
+    const { error } = await supabase.rpc('log_access_for_signing_v2', {
+      p_token: token,
+      p_action: action,
+      p_ip_address: ip_address,
+      p_user_agent: user_agent,
+      p_location: location,
+    });
+
+    if (error) {
+      console.error('Log access error:', JSON.stringify(error, null, 2));
+      throw new Error(`Failed to log access: ${error.message}`);
     }
   }
 }
