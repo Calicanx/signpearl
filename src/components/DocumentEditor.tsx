@@ -84,7 +84,7 @@ interface Database {
           id?: string;
           title: string;
           owner_id: string;
-          status?: 'draft' | 'sent' | 'signed' | 'completed';
+          status?: 'draft' | 'signed' | 'completed';
           content?: string | null;
           file_url?: string | null;
           created_at?: string;
@@ -407,9 +407,35 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         console.log('Recipients added:', addedRecipients);
 
         console.log('Step 6: Sending emails to recipients...');
+        const recipientsToSend = addedRecipients.map((recipient) => ({
+          email: recipient.email,
+          signingUrl: `${window.location.origin}/sign/${document.id}/${recipient.signing_url_token}`,
+        }));
+
+        const subject = 'Your document is ready for signature';
+        const text = `Please sign the document at %SIGNING_URL%. ${emailMessage ? `\n\n${emailMessage}` : ''}`;
+        const html = `<p>Please sign the document at <a href="%SIGNING_URL%">this link</a>.</p>${emailMessage ? `<p>${emailMessage}</p>` : ''}`;
+
+        const emailResponse = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            recipients: recipientsToSend,
+            subject,
+            text,
+            html,
+          }),
+        });
+
+        if (!emailResponse.ok) {
+          const errorData = await emailResponse.json();
+          throw new Error(`Failed to send emails: ${errorData.error}`);
+        }
+
         for (const recipient of addedRecipients) {
-          const signingUrl = `${window.location.origin}/sign/${document.id}/${recipient.signing_url_token}`;
-          console.log(`Sending email to ${recipient.email} with signing URL: ${signingUrl}`);
           await DocumentService.logAccess({
             document_id: document.id,
             recipient_id: recipient.id,

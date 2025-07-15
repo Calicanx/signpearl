@@ -12,50 +12,6 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ currentPage, onPageChange, isAuthenticated, user, onSignOut }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
-  const [sendGridStatus, setSendGridStatus] = React.useState<string | null>(null);
-
-  const testSendGridIntegration = async () => {
-    try {
-      setSendGridStatus('Testing...');
-
-      // SendGrid API request based on the provided cURL
-      const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_SENDGRID_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          personalizations: [{ to: [{ email: user?.email }] }],
-          from: { email: 'support@signpearl.com' },
-          subject: 'SendGrid Integration Test',
-          content: [
-            {
-              type: 'text/plain',
-              value: 'This is a test email sent from SignPearl using SendGrid!',
-            },
-            {
-              type: 'text/html',
-              value: '<p>This is a test email sent from SignPearl using SendGrid!</p>',
-            },
-          ],
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`SendGrid API error: ${response.statusText}`);
-      }
-
-      setSendGridStatus('Test email sent successfully!');
-      
-      // Reset status after 3 seconds
-      setTimeout(() => setSendGridStatus(null), 3000);
-    } catch (error) {
-      console.error('SendGrid test failed:', error);
-      setSendGridStatus('Failed to send test email');
-      setTimeout(() => setSendGridStatus(null), 3000);
-    }
-  };
 
   return (
     <header className="bg-gradient-to-r from-blue-900 via-purple-900 to-indigo-900 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
@@ -96,13 +52,6 @@ const Header: React.FC<HeaderProps> = ({ currentPage, onPageChange, isAuthentica
                   className="text-white/80 hover:text-white transition-colors"
                 >
                   Dashboard
-                </button>
-                <button
-                  onClick={testSendGridIntegration}
-                  className="bg-green-500/20 backdrop-blur-sm text-white px-4 py-1 rounded-lg hover:bg-green-500/30 transition-colors border border-green-500/30 text-sm"
-                  disabled={sendGridStatus === 'Testing...'}
-                >
-                  {sendGridStatus || 'Test SendGrid'}
                 </button>
                 <div className="flex items-center space-x-3">
                   <div className="w-8 h-8 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white font-medium border border-white/30">
@@ -159,13 +108,6 @@ const Header: React.FC<HeaderProps> = ({ currentPage, onPageChange, isAuthentica
                     className="text-left text-white/80 hover:text-white transition-colors"
                   >
                     Dashboard
-                  </button>
-                  <button
-                    onClick={testSendGridIntegration}
-                    className="bg-green-500/20 backdrop-blur-sm text-white px-6 py-2 rounded-lg hover:bg-green-500/30 transition-colors text-left border border-green-500/30"
-                    disabled={sendGridStatus === 'Testing...'}
-                  >
-                    {sendGridStatus || 'Test SendGrid'}
                   </button>
                   <div className="flex items-center space-x-3">
                     <div className="w-8 h-8 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white font-medium border border-white/30">
