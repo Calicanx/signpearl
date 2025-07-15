@@ -208,40 +208,56 @@ const LandingPage: React.FC<LandingPageProps> = ({ onPageChange }) => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-              Simple, transparent pricing
+              Always Free E-Signatures
             </h2>
             <p className="text-xl text-gray-600">
-              Choose the plan that fits your needs
+              Get all the premium features without the premium cost.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="bg-white p-8 rounded-xl shadow-lg">
               <div className="text-center">
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">Starter</h3>
+                <h3 className="text-2xl font-bold text-gray-900 mb-2">Free Forever</h3>
                 <div className="text-4xl font-bold text-gray-900 mb-4">
-                  $10<span className="text-lg text-gray-600">/month</span>
+                  $0<span className="text-lg text-gray-600">/month</span>
                 </div>
-                <p className="text-gray-600 mb-6">Perfect for individuals and small teams</p>
+                <p className="text-gray-600 mb-6">No credit card required. No hidden fees. No limits.</p>
                 <ul className="text-left space-y-3 mb-8">
                   <li className="flex items-center">
                     <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>5 documents per month</span>
+                    <span>Unlimited document uploads</span>
                   </li>
                   <li className="flex items-center">
                     <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>Basic templates</span>
+                    <span>Unlimited recipients</span>
                   </li>
                   <li className="flex items-center">
                     <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>Email support</span>
+                    <span>Email notifications for signers</span>
+                  </li>
+                  <li className="flex items-center">
+                    <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
+                    <span>Complete document finalization and distribution</span>
+                  </li>
+                  <li className="flex items-center">
+                    <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
+                    <span>Detailed audit logs and record keeping</span>
+                  </li>
+                  <li className="flex items-center">
+                    <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
+                    <span>ESIGN Act and UETA compliant signatures</span>
+                  </li>
+                  <li className="flex items-center">
+                    <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
+                    <span>14-day document retention</span>
                   </li>
                 </ul>
                 <button
                   onClick={() => onPageChange('signup')}
                   className="w-full bg-gray-900 text-white py-3 rounded-lg hover:bg-gray-800 transition-colors"
                 >
-                  Get Started
+                  Start Signing for Free
                 </button>
               </div>
             </div>
@@ -249,70 +265,36 @@ const LandingPage: React.FC<LandingPageProps> = ({ onPageChange }) => {
             <div className="bg-white p-8 rounded-xl shadow-lg border-2 border-blue-600 relative">
               <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
                 <span className="bg-blue-600 text-white px-4 py-1 rounded-full text-sm font-medium">
-                  Most Popular
+                  Enhanced Features
                 </span>
               </div>
               <div className="text-center">
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">Professional</h3>
+                <h3 className="text-2xl font-bold text-gray-900 mb-2">Starter Plan</h3>
                 <div className="text-4xl font-bold text-gray-900 mb-4">
-                  $25<span className="text-lg text-gray-600">/month</span>
+                  $9.99<span className="text-lg text-gray-600">/month</span>
                 </div>
-                <p className="text-gray-600 mb-6">For growing businesses</p>
+                <p className="text-gray-600 mb-6">Everything in Free plus:</p>
                 <ul className="text-left space-y-3 mb-8">
                   <li className="flex items-center">
                     <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>25 documents per month</span>
+                    <span>Email notifications on document open</span>
                   </li>
                   <li className="flex items-center">
                     <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>Advanced templates</span>
+                    <span>Custom recipient messages</span>
                   </li>
                   <li className="flex items-center">
                     <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>Team collaboration</span>
+                    <span>Unlimited document retention</span>
                   </li>
                   <li className="flex items-center">
                     <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>Priority support</span>
+                    <span>Send docs for signature via SMS (US only)</span>
                   </li>
                 </ul>
                 <button
                   onClick={() => onPageChange('signup')}
                   className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Get Started
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-white p-8 rounded-xl shadow-lg">
-              <div className="text-center">
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">Enterprise</h3>
-                <div className="text-4xl font-bold text-gray-900 mb-4">
-                  $50<span className="text-lg text-gray-600">/month</span>
-                </div>
-                <p className="text-gray-600 mb-6">For large organizations</p>
-                <ul className="text-left space-y-3 mb-8">
-                  <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>Unlimited documents</span>
-                  </li>
-                  <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>Custom templates</span>
-                  </li>
-                  <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>Advanced security</span>
-                  </li>
-                  <li className="flex items-center">
-                    <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                    <span>24/7 support</span>
-                  </li>
-                </ul>
-                <button
-                  onClick={() => onPageChange('signup')}
-                  className="w-full bg-gray-900 text-white py-3 rounded-lg hover:bg-gray-800 transition-colors"
                 >
                   Get Started
                 </button>
