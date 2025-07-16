@@ -12,7 +12,7 @@ import { Page, AuthUser } from './types';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('landing');
-  const { user, loading, signIn, signUp, signOut } = useAuth();
+  const { user, loading, signIn, signUp, signOut, signInWithGoogle } = useAuth();
 
   useEffect(() => {
     if (user && (currentPage === 'landing' || currentPage === 'signin' || currentPage === 'signup')) {
@@ -28,17 +28,13 @@ function App() {
 
   const handleSignIn = async (email: string, password: string) => {
     const { error } = await signIn(email, password);
-    if (!error) {
-      setCurrentPage('dashboard');
-    }
+    if (!error) setCurrentPage('dashboard');
     return { error };
   };
 
   const handleSignUp = async (name: string, email: string, password: string) => {
     const { error } = await signUp(email, password, name);
-    if (!error) {
-      setCurrentPage('dashboard');
-    }
+    if (!error) setCurrentPage('dashboard');
     return { error };
   };
 
@@ -62,9 +58,7 @@ function App() {
     <Router>
       <div className="min-h-screen bg-white">
         <Routes>
-          {/* Public route for document signing */}
           <Route path="/sign/:documentId/:token" element={<DocumentSign />} />
-          {/* Protected routes */}
           <Route
             path="*"
             element={
@@ -81,9 +75,9 @@ function App() {
                     case 'landing':
                       return <LandingPage onPageChange={handlePageChange} />;
                     case 'signin':
-                      return <SignIn onPageChange={handlePageChange} onSignIn={handleSignIn} />;
+                      return <SignIn onPageChange={handlePageChange} onSignIn={handleSignIn} onSignInWithGoogle={signInWithGoogle} />;
                     case 'signup':
-                      return <SignUp onPageChange={handlePageChange} onSignUp={handleSignUp} />;
+                      return <SignUp onPageChange={handlePageChange} onSignUp={handleSignUp} onSignInWithGoogle={signInWithGoogle} />;
                     case 'dashboard':
                       return user ? (
                         <Dashboard user={user} onPageChange={handlePageChange} />

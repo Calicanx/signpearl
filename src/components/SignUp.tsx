@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Mail, Lock, User, Eye, EyeOff, Building } from 'lucide-react';
-import { Page } from '../types'; // Import Page type
+import { Page } from '../types';
 
 interface SignUpProps {
-  onPageChange: (page: Page) => void; // Updated to use Page type
+  onPageChange: (page: Page) => void;
   onSignUp: (name: string, email: string, password: string) => Promise<{ error: any }>;
+  onSignInWithGoogle: () => void;
 }
 
-const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
+const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp, onSignInWithGoogle }) => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -26,24 +27,15 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
       setError('Passwords do not match');
       return;
     }
-    
     setIsLoading(true);
     setError(null);
-    
     const { error } = await onSignUp(formData.name, formData.email, formData.password);
-    
-    if (error) {
-      setError(error.message || 'An error occurred during sign up');
-    }
-    
+    if (error) setError(error.message || 'An error occurred during sign up');
     setIsLoading(false);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData(prev => ({
-      ...prev,
-      [e.target.name]: e.target.value
-    }));
+    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
   return (
@@ -53,7 +45,6 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
           <h2 className="text-3xl font-bold text-white mb-2">Create your account</h2>
           <p className="text-blue-100">Start your 30-day free trial</p>
         </div>
-
         <div className="bg-white/10 backdrop-blur-md p-8 rounded-xl shadow-lg border border-white/20">
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
@@ -61,11 +52,8 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
                 {error}
               </div>
             )}
-
             <div>
-              <label htmlFor="name" className="block text-sm font-medium text-white mb-2">
-                Full name
-              </label>
+              <label htmlFor="name" className="block text-sm font-medium text-white mb-2">Full name</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <User className="h-5 w-5 text-gray-300" />
@@ -82,11 +70,8 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
                 />
               </div>
             </div>
-
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-white mb-2">
-                Email address
-              </label>
+              <label htmlFor="email" className="block text-sm font-medium text-white mb-2">Email address</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Mail className="h-5 w-5 text-gray-300" />
@@ -103,11 +88,8 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
                 />
               </div>
             </div>
-
             <div>
-              <label htmlFor="company" className="block text-sm font-medium text-white mb-2">
-                Company name (optional)
-              </label>
+              <label htmlFor="company" className="block text-sm font-medium text-white mb-2">Company name (optional)</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Building className="h-5 w-5 text-gray-300" />
@@ -123,11 +105,8 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
                 />
               </div>
             </div>
-
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-white mb-2">
-                Password
-              </label>
+              <label htmlFor="password" className="block text-sm font-medium text-white mb-2">Password</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Lock className="h-5 w-5 text-gray-300" />
@@ -147,19 +126,12 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
                   onClick={() => setShowPassword(!showPassword)}
                 >
-                  {showPassword ? (
-                    <EyeOff className="h-5 w-5 text-gray-300" />
-                  ) : (
-                    <Eye className="h-5 w-5 text-gray-300" />
-                  )}
+                  {showPassword ? <EyeOff className="h-5 w-5 text-gray-300" /> : <Eye className="h-5 w-5 text-gray-300" />}
                 </button>
               </div>
             </div>
-
             <div>
-              <label htmlFor="confirmPassword" className="block text-sm font-medium text-white mb-2">
-                Confirm password
-              </label>
+              <label htmlFor="confirmPassword" className="block text-sm font-medium text-white mb-2">Confirm password</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Lock className="h-5 w-5 text-gray-300" />
@@ -179,15 +151,10 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 >
-                  {showConfirmPassword ? (
-                    <EyeOff className="h-5 w-5 text-gray-300" />
-                  ) : (
-                    <Eye className="h-5 w-5 text-gray-300" />
-                  )}
+                  {showConfirmPassword ? <EyeOff className="h-5 w-5 text-gray-300" /> : <Eye className="h-5 w-5 text-gray-300" />}
                 </button>
               </div>
             </div>
-
             <div className="flex items-center">
               <input
                 id="terms"
@@ -198,16 +165,11 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
               />
               <label htmlFor="terms" className="ml-2 block text-sm text-white">
                 I agree to the{' '}
-                <a href="#" className="text-blue-300 hover:text-blue-200">
-                  Terms of Service
-                </a>{' '}
+                <a href="#" className="text-blue-300 hover:text-blue-200">Terms of Service</a>{' '}
                 and{' '}
-                <a href="#" className="text-blue-300 hover:text-blue-200">
-                  Privacy Policy
-                </a>
+                <a href="#" className="text-blue-300 hover:text-blue-200">Privacy Policy</a>
               </label>
             </div>
-
             <button
               type="submit"
               disabled={isLoading}
@@ -216,7 +178,6 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
               {isLoading ? 'Creating account...' : 'Create account'}
             </button>
           </form>
-
           <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
@@ -226,9 +187,11 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
                 <span className="px-2 bg-transparent text-gray-300">Or continue with</span>
               </div>
             </div>
-
             <div className="mt-6 grid grid-cols-2 gap-3">
-              <button className="w-full inline-flex justify-center py-2 px-4 border border-white/30 rounded-md shadow-sm bg-white/20 text-sm font-medium text-white hover:bg-white/30">
+              <button
+                onClick={onSignInWithGoogle}
+                className="w-full inline-flex justify-center py-2 px-4 border border-white/30 rounded-md shadow-sm bg-white/20 text-sm font-medium text-white hover:bg-white/30"
+              >
                 <span className="sr-only">Sign up with Google</span>
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -245,13 +208,9 @@ const SignUp: React.FC<SignUpProps> = ({ onPageChange, onSignUp }) => {
               </button>
             </div>
           </div>
-
           <p className="mt-6 text-center text-sm text-gray-300">
             Already have an account?{' '}
-            <button
-              onClick={() => onPageChange('signin')}
-              className="font-medium text-blue-300 hover:text-blue-200"
-            >
+            <button onClick={() => onPageChange('signin')} className="font-medium text-blue-300 hover:text-blue-200">
               Sign in
             </button>
           </p>

@@ -1,17 +1,15 @@
 import React, { useState } from 'react';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
-import { Page } from '../types'; // Import Page type
+import { Page } from '../types';
 
 interface SignInProps {
-  onPageChange: (page: Page) => void; // Updated to use Page type
+  onPageChange: (page: Page) => void;
   onSignIn: (email: string, password: string) => Promise<{ error: any }>;
+  onSignInWithGoogle: () => void;
 }
 
-const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
-  const [formData, setFormData] = useState({
-    email: '',
-    password: ''
-  });
+const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn, onSignInWithGoogle }) => {
+  const [formData, setFormData] = useState({ email: '', password: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,21 +18,13 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
-    
     const { error } = await onSignIn(formData.email, formData.password);
-    
-    if (error) {
-      setError(error.message || 'An error occurred during sign in');
-    }
-    
+    if (error) setError(error.message || 'An error occurred during sign in');
     setIsLoading(false);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData(prev => ({
-      ...prev,
-      [e.target.name]: e.target.value
-    }));
+    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
   return (
@@ -44,7 +34,6 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
           <h2 className="text-3xl font-bold text-white mb-2">Welcome back</h2>
           <p className="text-blue-100">Sign in to your SignPearl account</p>
         </div>
-
         <div className="bg-white/10 backdrop-blur-md p-8 rounded-xl shadow-lg border border-white/20">
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
@@ -52,11 +41,8 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
                 {error}
               </div>
             )}
-
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-white mb-2">
-                Email address
-              </label>
+              <label htmlFor="email" className="block text-sm font-medium text-white mb-2">Email address</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Mail className="h-5 w-5 text-gray-300" />
@@ -73,11 +59,8 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
                 />
               </div>
             </div>
-
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-white mb-2">
-                Password
-              </label>
+              <label htmlFor="password" className="block text-sm font-medium text-white mb-2">Password</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Lock className="h-5 w-5 text-gray-300" />
@@ -97,15 +80,10 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
                   onClick={() => setShowPassword(!showPassword)}
                 >
-                  {showPassword ? (
-                    <EyeOff className="h-5 w-5 text-gray-300" />
-                  ) : (
-                    <Eye className="h-5 w-5 text-gray-300" />
-                  )}
+                  {showPassword ? <EyeOff className="h-5 w-5 text-gray-300" /> : <Eye className="h-5 w-5 text-gray-300" />}
                 </button>
               </div>
             </div>
-
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <input
@@ -114,18 +92,10 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
                   type="checkbox"
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
-                <label htmlFor="remember-me" className="ml-2 block text-sm text-white">
-                  Remember me
-                </label>
+                <label htmlFor="remember-me" className="ml-2 block text-sm text-white">Remember me</label>
               </div>
-              <button
-                type="button"
-                className="text-sm text-blue-300 hover:text-blue-200"
-              >
-                Forgot your password?
-              </button>
+              <button type="button" className="text-sm text-blue-300 hover:text-blue-200">Forgot your password?</button>
             </div>
-
             <button
               type="submit"
               disabled={isLoading}
@@ -134,7 +104,6 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
               {isLoading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
-
           <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
@@ -144,9 +113,11 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
                 <span className="px-2 bg-transparent text-gray-300">Or continue with</span>
               </div>
             </div>
-
             <div className="mt-6 grid grid-cols-2 gap-3">
-              <button className="w-full inline-flex justify-center py-2 px-4 border border-white/30 rounded-md shadow-sm bg-white/20 text-sm font-medium text-white hover:bg-white/30">
+              <button
+                onClick={onSignInWithGoogle}
+                className="w-full inline-flex justify-center py-2 px-4 border border-white/30 rounded-md shadow-sm bg-white/20 text-sm font-medium text-white hover:bg-white/30"
+              >
                 <span className="sr-only">Sign in with Google</span>
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -163,13 +134,9 @@ const SignIn: React.FC<SignInProps> = ({ onPageChange, onSignIn }) => {
               </button>
             </div>
           </div>
-
           <p className="mt-6 text-center text-sm text-gray-300">
             Don't have an account?{' '}
-            <button
-              onClick={() => onPageChange('signup')}
-              className="font-medium text-blue-300 hover:text-blue-200"
-            >
+            <button onClick={() => onPageChange('signup')} className="font-medium text-blue-300 hover:text-blue-200">
               Sign up
             </button>
           </p>
