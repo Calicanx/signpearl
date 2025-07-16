@@ -62,7 +62,7 @@ const Footer: React.FC = () => {
         </div>
 
         <div className="border-t border-gray-800 mt-12 pt-8 text-center text-gray-400">
-          <p>&copy; 2024 SignPearl. All rights reserved.</p>
+          <p>&copy; 2025 SignPearl. All rights reserved.</p>
         </div>
       </div>
     </footer>
