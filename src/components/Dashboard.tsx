@@ -15,16 +15,18 @@ import {
   Upload,
   Send,
   Mail,
+  MessageSquare,
+  Trash2
 } from 'lucide-react';
-import { Template, Page } from '../types';
 import DocumentUpload from './DocumentUpload';
 import DocumentEditor from './DocumentEditor';
 import DocumentViewer from './DocumentViewer';
-import TemplateViewer from './TemplateViewer';
+import AIChat from './AIChat';
+import { v4 as uuidv4 } from 'uuid';
 
 interface DashboardProps {
   user: { id: string; name: string; email: string };
-  onPageChange: (page: Page) => void;
+  onPageChange: (page: string) => void;
 }
 
 interface UploadedFile {
@@ -47,7 +49,7 @@ interface Document {
   recipients: Array<{
     id: string;
     email: string;
-    name: string;
+    name?: string | null;
     status: 'pending' | 'viewed' | 'signed';
     signing_url_token?: string | null;
     signatures?: Array<{
@@ -56,6 +58,8 @@ interface Document {
       signed_at: string;
     }> | null;
   }>;
+  is_template?: boolean;
+  signature_fields?: SignatureField[];
 }
 
 interface SentDocument {
@@ -69,7 +73,7 @@ interface SentDocument {
     status: 'pending' | 'viewed' | 'signed';
     signedAt?: string;
     signingUrl?: string;
-    accessLogs?: Array<{
+    accessLogs: Array<{
       action: string;
       timestamp: string;
       ip_address: string;
@@ -91,7 +95,7 @@ interface SignatureField {
   width: number;
   height: number;
   page_number: number;
-  field_type: 'signature' | 'text' | 'date';
+  field_type: 'signature' | 'text' | 'date' | 'name' | 'email' | 'phone' | 'custom';
   label: string;
   required: boolean;
   assigned_to?: string | null;
@@ -105,31 +109,30 @@ const isValidUUID = (uuid: string): boolean => {
 };
 
 const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
-  const [activeTab, setActiveTab] = useState('documents');
+  const [activeTab, setActiveTab] = useState<'documents' | 'sent' | 'templates'>('documents');
   const [documents, setDocuments] = useState<Document[]>([]);
   const [sentDocuments, setSentDocuments] = useState<SentDocument[]>([]);
+  const [myTemplates, setMyTemplates] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDocumentEditor, setShowDocumentEditor] = useState(false);
   const [showDocumentViewer, setShowDocumentViewer] = useState(false);
-  const [showTemplateViewer, setShowTemplateViewer] = useState(false);
+  const [showAIChat, setShowAIChat] = useState(false);
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<Document | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<SelectedDocument | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [fields, setFields] = useState<SignatureField[]>([]);
+  const [isTemplateUpload, setIsTemplateUpload] = useState(false);
 
-  // Memoize fields to prevent unnecessary re-renders
   const memoizedFields = useMemo(() => fields || [], [fields]);
 
-  // Initialize fields once on component mount
   useEffect(() => {
-    setFields([]); // Initialize fields as empty or load from a service if needed
+    setFields([]);
   }, []);
 
-  // Load documents and sent documents
   useEffect(() => {
     const loadData = async () => {
       if (!isValidUUID(user.id)) {
@@ -137,13 +140,17 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
         setLoading(false);
         return;
       }
-
+  
       try {
         setLoading(true);
         setError(null);
-        const docs = await DocumentService.getDocumentsWithDetails(user.id);
+        const [docs, sentDocs, userTemplates] = await Promise.all([
+          DocumentService.getDocumentsWithDetails(user.id, searchTerm),
+          DocumentService.getSentDocuments(user.id),
+          DocumentService.getMyTemplatesWithFields(user.id),
+        ]);
+  
         setDocuments(docs);
-        const sentDocs = await DocumentService.getSentDocuments(user.id);
         setSentDocuments(
           sentDocs.map((doc: Document) => ({
             id: doc.id,
@@ -152,7 +159,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
             sentAt: doc.updated_at || doc.created_at,
             recipients: doc.recipients.map((recipient) => ({
               email: recipient.email,
-              name: recipient.name,
+              name: recipient.name || 'Unknown',
               status: recipient.status,
               signedAt: recipient.signatures?.[0]?.signed_at,
               signingUrl: recipient.signing_url_token
@@ -162,15 +169,41 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
             })),
           }))
         );
+        setMyTemplates(userTemplates);
       } catch (error: any) {
         console.error('Error loading data:', error);
-        setError(error.message || 'Failed to load documents. Please try again.');
+        setError(error.message || 'Failed to load data. Please try again.');
       } finally {
         setLoading(false);
       }
     };
     loadData();
-  }, [user.id]);
+  }, [user.id, searchTerm]);
+
+  const handleDeleteDocument = useCallback(async (documentId: string) => {
+    if (!isValidUUID(documentId)) {
+      alert('Invalid document ID');
+      return;
+    }
+    
+    try {
+      await DocumentService.deleteDocument(documentId);
+      
+      // Update documents state (all documents tab)
+      setDocuments(prev => prev.filter(doc => doc.id !== documentId));
+      
+      // Update sent documents state
+      setSentDocuments(prev => prev.filter(doc => doc.id !== documentId));
+      
+      // Update templates state
+      setMyTemplates(prev => prev.filter(template => template.id !== documentId));
+      
+      alert('Document deleted successfully');
+    } catch (error: any) {
+      console.error('Error deleting document:', error);
+      alert(error.message || 'Failed to delete document. Please try again.');
+    }
+  }, []);
 
   const handleDownload = useCallback(
     async (fileUrl: string, filename: string) => {
@@ -202,13 +235,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
     setSelectedDocument({ url: fileUrl, id: documentId });
     setShowDocumentViewer(true);
   }, []);
-
-  const templates: Template[] = [
-    { id: '1', name: 'Non-Disclosure Agreement', category: 'Legal', description: 'Standard NDA template', usage: 145 },
-    { id: '2', name: 'Service Agreement', category: 'Business', description: 'Professional services contract', usage: 89 },
-    { id: '3', name: 'Employment Contract', category: 'HR', description: 'Full-time employment agreement', usage: 67 },
-    { id: '4', name: 'Partnership Agreement', category: 'Business', description: 'Business partnership contract', usage: 34 },
-  ];
 
   const getStatusColor = useCallback((status: string) => {
     switch (status.toLowerCase()) {
@@ -246,42 +272,74 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
     }
   }, []);
 
-  const filteredTemplates = useMemo(
-    () => templates.filter((template) => template.name.toLowerCase().includes(searchTerm.toLowerCase())),
-    [searchTerm]
-  );
+  const handleTemplateUse = useCallback(async (template: Document) => {
+    if (!template.file_url) {
+      alert('Template file not found');
+      return;
+    }
 
-  const filteredSentDocuments = useMemo(
-    () => sentDocuments.filter((doc) => doc.title.toLowerCase().includes(searchTerm.toLowerCase())),
-    [sentDocuments, searchTerm]
-  );
+    try {
+      const response = await fetch(template.file_url);
+      if (!response.ok) throw new Error('Failed to fetch template file');
+      const blob = await response.blob();
+      
+      const file = new File([blob], template.title, { type: blob.type });
+
+      setSelectedFile({
+        id: uuidv4(),
+        file,
+        name: template.title,
+        size: blob.size,
+        type: blob.type,
+        uploadedAt: new Date(),
+      });
+      
+      setFields(template.signature_fields || []);
+      setSelectedTemplate(template);
+      setShowDocumentViewer(false);
+      setShowDocumentEditor(true);
+      setIsTemplateUpload(false);
+    } catch (error: any) {
+      console.error('Error loading template file:', error);
+      alert(error.message || 'Failed to load template. Please try again.');
+    }
+  }, []);
+
+  const handleTemplateView = useCallback((template: Document) => {
+    setSelectedTemplate(template);
+    setShowDocumentViewer(true);
+  }, []);
 
   const handleFileSelect = useCallback((file: UploadedFile) => {
     setSelectedFile(file);
     setShowUploadModal(false);
     setShowDocumentEditor(true);
+    setIsTemplateUpload(false);
   }, []);
 
-  const handleTemplateView = useCallback((template: Template) => {
-    setSelectedTemplate(template);
-    setShowTemplateViewer(true);
-  }, []);
-
-  const handleTemplateUse = useCallback((template: Template) => {
-    setSelectedTemplate(template);
-    setShowTemplateViewer(false);
+  const handleTemplateFileSelect = useCallback((file: UploadedFile) => {
+    setSelectedFile(file);
+    setShowUploadModal(false);
     setShowDocumentEditor(true);
+    setIsTemplateUpload(true);
   }, []);
 
   const handleDocumentSave = useCallback(
-    async (fields: any[], documentData?: any) => {
+    async (fields: SignatureField[], documentData?: any) => {
       try {
         if (!isValidUUID(user.id)) {
           setError('Invalid user ID');
           return;
         }
-        await DocumentService.getDocumentsWithDetails(user.id);
-        const sentDocs = await DocumentService.getSentDocuments(user.id);
+        
+        // Refresh all document types
+        const [docs, sentDocs, userTemplates] = await Promise.all([
+          DocumentService.getDocumentsWithDetails(user.id),
+          DocumentService.getSentDocuments(user.id),
+          DocumentService.getMyTemplatesWithFields(user.id),
+        ]);
+        
+        setDocuments(docs);
         setSentDocuments(
           sentDocs.map((doc: Document) => ({
             id: doc.id,
@@ -290,7 +348,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
             sentAt: doc.updated_at || doc.created_at,
             recipients: doc.recipients.map((recipient) => ({
               email: recipient.email,
-              name: recipient.name,
+              name: recipient.name || 'Unknown',
               status: recipient.status,
               signedAt: recipient.signatures?.[0]?.signed_at,
               signingUrl: recipient.signing_url_token
@@ -300,13 +358,19 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
             })),
           }))
         );
+        setMyTemplates(userTemplates);
+        
       } catch (error: any) {
         console.error('Error refreshing documents:', error);
         setError(error.message || 'Failed to refresh documents');
       }
+      
+      // Reset UI states
       setShowDocumentEditor(false);
       setSelectedFile(null);
       setSelectedTemplate(null);
+      setIsTemplateUpload(false);
+      setFields([]);
     },
     [user.id]
   );
@@ -330,6 +394,21 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
       });
   }, []);
 
+  const filteredMyTemplates = useMemo(
+    () => myTemplates.filter((template) => template.title.toLowerCase().includes(searchTerm.toLowerCase())),
+    [myTemplates, searchTerm]
+  );
+
+  const filteredSentDocuments = useMemo(
+    () => sentDocuments.filter((doc) => doc.title.toLowerCase().includes(searchTerm.toLowerCase())),
+    [sentDocuments, searchTerm]
+  );
+
+  const filteredDocuments = useMemo(
+    () => documents.filter((doc) => doc.title.toLowerCase().includes(searchTerm.toLowerCase())),
+    [documents, searchTerm]
+  );
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-gradient-to-r from-blue-900 via-purple-900 to-indigo-900 shadow-sm">
@@ -338,22 +417,35 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
             <div className="flex items-center justify-between">
               <div>
                 <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-                <p className="text-blue-100">Welcome back, {user.name}</p>
+                <p className="text-blue-100">Welcome back, {user.name || 'User'}</p>
               </div>
               <div className="flex space-x-3">
                 <button
-                  onClick={() => setShowUploadModal(true)}
+                  onClick={() => {
+                    setShowUploadModal(true);
+                    setIsTemplateUpload(false);
+                  }}
                   className="bg-white/20 backdrop-blur-sm text-white px-6 py-3 rounded-lg hover:bg-white/30 transition-colors flex items-center space-x-2 border border-white/30"
                 >
                   <Upload className="w-5 h-5" />
                   <span>Upload Document</span>
                 </button>
                 <button
-                  onClick={() => setShowDocumentEditor(true)}
+                  onClick={() => {
+                    setShowUploadModal(true);
+                    setIsTemplateUpload(true);
+                  }}
                   className="bg-white/20 backdrop-blur-sm text-white px-6 py-3 rounded-lg hover:bg-white/30 transition-colors flex items-center space-x-2 border border-white/30"
                 >
-                  <Plus className="w-5 h-5" />
-                  <span>New Document</span>
+                  <Upload className="w-5 h-5" />
+                  <span>Upload Template</span>
+                </button>
+                <button
+                  onClick={() => setShowAIChat(true)}
+                  className="bg-white/20 backdrop-blur-sm text-white px-6 py-3 rounded-lg hover:bg-white/30 transition-colors flex items-center space-x-2 border border-white/30"
+                >
+                  <MessageSquare className="w-5 h-5" />
+                  <span>AI Document</span>
                 </button>
               </div>
             </div>
@@ -478,13 +570,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                 <div className="flex items-center justify-center py-12">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                 </div>
-              ) : documents.length === 0 ? (
+              ) : filteredDocuments.length === 0 ? (
                 <div className="text-center py-12">
                   <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                   <h3 className="text-lg font-medium text-gray-900 mb-2">No documents yet</h3>
                   <p className="text-gray-600 mb-4">Get started by uploading your first document</p>
                   <button
-                    onClick={() => setShowUploadModal(true)}
+                    onClick={() => {
+                      setShowUploadModal(true);
+                      setIsTemplateUpload(false);
+                    }}
                     className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                   >
                     Upload Document
@@ -492,97 +587,86 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {documents
-                    .filter((doc) => doc.title.toLowerCase().includes(searchTerm.toLowerCase()))
-                    .map((doc) => (
-                      <div
-                        key={doc.id}
-                        className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-                      >
-                        <div className="flex items-center space-x-4">
-                          <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                            <FileText className="w-5 h-5 text-blue-600" />
-                          </div>
-                          <div>
-                            <h3 className="font-medium text-gray-900">{doc.title}</h3>
-                            <p className="text-sm text-gray-600">
-                              {doc.recipients?.length || 0} recipient{(doc.recipients?.length || 0) !== 1 ? 's' : ''} •{' '}
-                              {new Date(doc.created_at).toLocaleDateString()}
-                            </p>
-                          </div>
+                  {filteredDocuments.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      <div className="flex items-center space-x-4">
+                        <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                          <FileText className="w-5 h-5 text-blue-600" />
                         </div>
-                        <div className="flex items-center space-x-4">
-                          <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(doc.status)}`}>
-                            {getStatusIcon(doc.status)}
-                            <span className="capitalize">{doc.status}</span>
-                          </div>
-                          <div className="flex items-center space-x-2">
+                        <div>
+                          <h3 className="font-medium text-gray-900">{doc.title}</h3>
+                          <p className="text-sm text-gray-600">
+                            {doc.recipients?.length || 0} recipient{(doc.recipients?.length || 0) !== 1 ? 's' : ''} •{' '}
+                            {new Date(doc.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-4">
+                        <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(doc.status)}`}>
+                          {getStatusIcon(doc.status)}
+                          <span className="capitalize">{doc.status}</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => doc.file_url && handleDocumentView(doc.file_url, doc.id)}
+                            disabled={!doc.file_url}
+                            className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="View document"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => doc.file_url && handleDownload(doc.file_url, doc.title)}
+                            disabled={!doc.file_url}
+                            className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Download document"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                          <div className="relative">
                             <button
-                              onClick={() => doc.file_url && handleDocumentView(doc.file_url, doc.id)}
-                              disabled={!doc.file_url}
-                              className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                              title="View document"
+                              onClick={() => setOpenMenuId(openMenuId === doc.id ? null : doc.id)}
+                              className="p-2 text-gray-400 hover:text-gray-600"
+                              title="More actions"
                             >
-                              <Eye className="w-4 h-4" />
+                              <MoreHorizontal className="w-4 h-4" />
                             </button>
-                            <button
-                              onClick={() => doc.file_url && handleDownload(doc.file_url, doc.title)}
-                              disabled={!doc.file_url}
-                              className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                              title="Download document"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
-                            <div className="relative">
-                              <button
-                                onClick={() => setOpenMenuId(openMenuId === doc.id ? null : doc.id)}
-                                className="p-2 text-gray-400 hover:text-gray-600"
-                                title="More actions"
-                              >
-                                <MoreHorizontal className="w-4 h-4" />
-                              </button>
-                              {openMenuId === doc.id && (
-                                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10">
-                                  <div className="py-1">
-                                    <button
-                                      onClick={() => {
-                                        console.log('Edit document', doc.id);
-                                        setOpenMenuId(null);
-                                      }}
-                                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      onClick={async () => {
-                                        if (window.confirm('Are you sure you want to delete this document?')) {
-                                          try {
-                                            if (!isValidUUID(doc.id)) {
-                                              alert('Invalid document ID');
-                                              return;
-                                            }
-                                            await DocumentService.deleteDocument(doc.id);
-                                            setDocuments(documents.filter((d) => d.id !== doc.id));
-                                            setSentDocuments(sentDocuments.filter((d) => d.id !== doc.id));
-                                          } catch (error: any) {
-                                            console.error('Error deleting document:', error);
-                                            alert(error.message || 'Failed to delete document. Please try again.');
-                                          }
-                                        }
-                                        setOpenMenuId(null);
-                                      }}
-                                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    >
-                                      Delete
-                                    </button>
-                                  </div>
+                            {openMenuId === doc.id && (
+                              <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10">
+                                <div className="py-1">
+                                  <button
+                                    onClick={() => {
+                                      console.log('Edit document', doc.id);
+                                      setOpenMenuId(null);
+                                    }}
+                                    className="flex items-center w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                  >
+                                    <Edit3 className="w-4 h-4 mr-2" />
+                                    <span>Edit</span>
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      if (window.confirm('Are you sure you want to delete this document?')) {
+                                        handleDeleteDocument(doc.id);
+                                      }
+                                      setOpenMenuId(null);
+                                    }}
+                                    className="flex items-center w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                                  >
+                                    <Trash2 className="w-4 h-4 mr-2" />
+                                    <span>Delete</span>
+                                  </button>
                                 </div>
-                              )}
-                            </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
-                    ))}
+                    </div>
+                  ))}
                 </div>
               )
             ) : activeTab === 'sent' ? (
@@ -682,54 +766,90 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
                             </div>
                           ))}
                         </div>
+                        <button
+                          onClick={() => {
+                            if (window.confirm('Are you sure you want to delete this sent document?')) {
+                              handleDeleteDocument(doc.id);
+                            }
+                          }}
+                          className="mt-4 flex items-center text-sm text-red-600 hover:text-red-700"
+                        >
+                          <Trash2 className="w-4 h-4 mr-1" />
+                          <span>Delete Document</span>
+                        </button>
                       </div>
                     </div>
                   ))
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredTemplates.length === 0 ? (
-                  <div className="text-center py-12 col-span-full">
-                    <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-gray-900 mb-2">No templates found</h3>
-                    <p className="text-gray-600">Try adjusting your search term.</p>
-                  </div>
-                ) : (
-                  filteredTemplates.map((template) => (
-                    <div
-                      key={template.id}
-                      className="bg-gray-50 p-6 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                    >
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                          <FileText className="w-5 h-5 text-purple-600" />
-                        </div>
-                        <span className="text-xs text-gray-500">{template.usage} uses</span>
-                      </div>
-                      <h3 className="font-medium text-gray-900 mb-2">{template.name}</h3>
-                      <p className="text-sm text-gray-600 mb-4 line-clamp-2">{template.description}</p>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-gray-500 uppercase">{template.category}</span>
-                        <div className="flex space-x-2">
-                          <button
-                            onClick={() => handleTemplateView(template)}
-                            className="text-gray-600 hover:text-gray-700 text-sm font-medium flex items-center space-x-1"
-                          >
-                            <Eye className="w-4 h-4" />
-                            <span>View</span>
-                          </button>
-                          <button
-                            onClick={() => handleTemplateUse(template)}
-                            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
-                          >
-                            Use Template
-                          </button>
-                        </div>
-                      </div>
+              <div className="space-y-8">
+                <div>
+                  <h2 className="text-xl font-bold mb-4">My Templates</h2>
+                  {filteredMyTemplates.length === 0 ? (
+                    <div className="text-center py-12">
+                      <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">No templates uploaded</h3>
+                      <p className="text-gray-600 mb-4">Upload a document and save it as a template to get started.</p>
+                      <button
+                        onClick={() => {
+                          setShowUploadModal(true);
+                          setIsTemplateUpload(true);
+                        }}
+                        className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Upload Template
+                      </button>
                     </div>
-                  ))
-                )}
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {filteredMyTemplates.map((template) => (
+                        <div
+                          key={template.id}
+                          className="bg-gray-50 p-6 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                              <FileText className="w-5 h-5 text-blue-600" />
+                            </div>
+                            <span className="text-xs text-gray-500">
+                              Created on {new Date(template.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <h3 className="font-medium text-gray-900 mb-2">{template.title}</h3>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-gray-500 uppercase">Custom Template</span>
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={() => handleTemplateView(template)}
+                                className="text-gray-600 hover:text-gray-700 text-sm font-medium flex items-center space-x-1"
+                              >
+                                <Eye className="w-4 h-4" />
+                                <span>View</span>
+                              </button>
+                              <button
+                                onClick={() => handleTemplateUse(template)}
+                                className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                              >
+                                Use Template
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (window.confirm('Are you sure you want to delete this template?')) {
+                                    handleDeleteDocument(template.id);
+                                  }
+                                }}
+                                className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -737,66 +857,74 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
       </div>
 
       {showUploadModal && (
-        <DocumentUpload onFileSelect={handleFileSelect} onClose={() => setShowUploadModal(false)} />
+        <DocumentUpload
+          onFileSelect={isTemplateUpload ? handleTemplateFileSelect : handleFileSelect}
+          onClose={() => setShowUploadModal(false)}
+        />
       )}
 
       {showDocumentEditor && (
         <DocumentEditor
           file={selectedFile?.file}
+          initialFields={fields}
           templateContent={
             selectedTemplate
               ? `
-            <div class="p-8 bg-white min-h-[800px] font-serif">
-              <div class="text-center mb-8">
-                <h1 class="text-2xl font-bold mb-2">${selectedTemplate.name.toUpperCase()}</h1>
-                <div class="w-24 h-0.5 bg-gray-400 mx-auto"></div>
-              </div>
-              <div class="space-y-6">
-                <div class="grid grid-cols-2 gap-8">
-                  <div>
-                    <p class="font-semibold mb-2">Party A (Disclosing Party):</p>
-                    <div class="border-b border-gray-400 pb-1 mb-4">
-                      <span class="bg-yellow-200 px-2 py-1 text-sm">[COMPANY_NAME]</span>
-                    </div>
+                <div class="p-8 bg-white min-h-[800px] font-serif">
+                  <div class="text-center mb-8">
+                    <h1 class="text-2xl font-bold mb-2">${selectedTemplate.title.toUpperCase()}</h1>
+                    <div class="w-24 h-0.5 bg-gray-400 mx-auto"></div>
                   </div>
-                  <div>
-                    <p class="font-semibold mb-2">Party B (Receiving Party):</p>
-                    <div class="border-b border-gray-400 pb-1 mb-4">
-                      <span class="bg-blue-200 px-2 py-1 text-sm">[RECIPIENT_NAME]</span>
+                  <div class="space-y-6">
+                    <div class="grid grid-cols-2 gap-8">
+                      <div>
+                        <p class="font-semibold mb-2">Party A:</p>
+                        <div class="border-b border-gray-400 pb-1 mb-4">
+                          <span class="bg-yellow-200 px-2 py-1 text-sm">[PARTY_A_NAME]</span>
+                        </div>
+                      </div>
+                      <div>
+                        <p class="font-semibold mb-2">Party B:</p>
+                        <div class="border-b border-gray-400 pb-1 mb-4">
+                          <span class="bg-blue-200 px-2 py-1 text-sm">[PARTY_B_NAME]</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="mt-8">
+                      <p class="text-justify leading-relaxed">
+                        This ${selectedTemplate.title} is entered into on 
+                        <span class="bg-green-200 px-1 mx-1">[DATE]</span> 
+                        by and between the parties identified above.
+                      </p>
+                    </div>
+                    <div class="mt-12 grid grid-cols-2 gap-8">
+                      <div class="text-center">
+                        <div class="border-t border-gray-400 pt-2 mt-16">
+                          <p class="font-semibold">Party A Signature</p>
+                          <div class="bg-red-200 px-2 py-1 mt-2 text-sm">[SIGNATURE_1]</div>
+                        </div>
+                      </div>
+                      <div class="text-center">
+                        <div class="border-t border-gray-400 pt-2 mt-16">
+                          <p class="font-semibold">Party B Signature</p>
+                          <div class="bg-red-200 px-2 py-1 mt-2 text-sm">[SIGNATURE_2]</div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
-                <div class="mt-8">
-                  <p class="text-justify leading-relaxed">
-                    This ${selectedTemplate.name} ("Agreement") is entered into on 
-                    <span class="bg-green-200 px-1 mx-1">[DATE]</span> 
-                    by and between the parties identified above.
-                  </p>
-                </div>
-                <div class="mt-12 grid grid-cols-2 gap-8">
-                  <div class="text-center">
-                    <div class="border-t border-gray-400 pt-2 mt-16">
-                      <p class="font-semibold">Party A Signature</p>
-                      <div class="bg-red-200 px-2 py-1 mt-2 text-sm">[SIGNATURE_1]</div>
-                    </div>
-                  </div>
-                  <div class="text-center">
-                    <div class="border-t border-gray-400 pt-2 mt-16">
-                      <p class="font-semibold">Party B Signature</p>
-                      <div class="bg-red-200 px-2 py-1 mt-2 text-sm">[SIGNATURE_2]</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          `
+              `
               : undefined
           }
-          templateName={selectedTemplate?.name}
+          templateName={selectedTemplate?.title}
+          documentId={isTemplateUpload ? selectedTemplate?.id : undefined}
+          isTemplateUpload={isTemplateUpload}
           onClose={() => {
             setShowDocumentEditor(false);
             setSelectedFile(null);
             setSelectedTemplate(null);
+            setIsTemplateUpload(false);
+            setFields([]);
           }}
           onSave={handleDocumentSave}
         />
@@ -816,14 +944,36 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onPageChange }) => {
         />
       )}
 
-      {showTemplateViewer && selectedTemplate && (
-        <TemplateViewer
-          template={selectedTemplate}
+      {showDocumentViewer && selectedTemplate && (
+        <DocumentViewer
+          key={selectedTemplate.id}
+          fileUrl={selectedTemplate.file_url || ''}
+          documentId={selectedTemplate.id}
           onClose={() => {
-            setShowTemplateViewer(false);
+            setShowDocumentViewer(false);
             setSelectedTemplate(null);
           }}
-          onUseTemplate={handleTemplateUse}
+          isSigningEnabled={false}
+          fields={memoizedFields}
+        />
+      )}
+
+      {showAIChat && (
+        <AIChat
+          onClose={() => setShowAIChat(false)}
+          onSave={(file) => {
+            setSelectedFile({
+              id: uuidv4(),
+              file,
+              name: 'AI Generated Document.pdf',
+              size: file.size,
+              type: file.type,
+              uploadedAt: new Date(),
+            });
+            setShowAIChat(false);
+            setShowDocumentEditor(true);
+            setIsTemplateUpload(false);
+          }}
         />
       )}
     </div>

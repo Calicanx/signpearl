@@ -3,7 +3,25 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import { useAuth } from '../hooks/useAuth';
 import { DocumentService } from '../services/documentService';
 import { v4 as uuidv4 } from 'uuid';
-import { X, Save, Plus, Type, Edit3, MousePointer, Send, Mail, Users, UserPlus, Calendar, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
+import {
+  X,
+  Save,
+  Plus,
+  Type,
+  Edit3,
+  MousePointer,
+  Send,
+  Mail,
+  Users,
+  UserPlus,
+  Calendar,
+  FileText,
+  CheckCircle2,
+  AlertCircle,
+  User,
+  Phone,
+  AtSign,
+} from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import { PDFDocument } from 'pdf-lib';
 
@@ -17,7 +35,7 @@ interface SignatureField {
   width: number;
   height: number;
   page: number;
-  type: 'signature' | 'text' | 'date';
+  type: 'signature' | 'text' | 'date' | 'name' | 'email' | 'phone' | 'custom';
   label: string;
   required: boolean;
   assignedTo?: string | null;
@@ -40,6 +58,7 @@ interface DocumentData {
   file_url?: string | null;
   created_at?: string;
   updated_at?: string;
+  is_template?: boolean;
 }
 
 interface RecipientData {
@@ -57,7 +76,7 @@ interface RecipientData {
 interface SignatureFieldData {
   id?: string;
   document_id: string;
-  field_type: 'signature' | 'text' | 'date';
+  field_type: 'signature' | 'text' | 'date' | 'name' | 'email' | 'phone' | 'custom';
   x_position: number;
   y_position: number;
   width: number;
@@ -72,6 +91,8 @@ interface DocumentEditorProps {
   file?: File;
   templateContent?: string;
   templateName?: string;
+  documentId?: string; // New prop for loading templates
+  isTemplateUpload?: boolean; // New prop to indicate template upload
   onClose: () => void;
   onSave: (fields: SignatureField[], documentData?: any) => void;
 }
@@ -84,11 +105,12 @@ interface Database {
           id?: string;
           title: string;
           owner_id: string;
-          status?: 'draft' | 'signed' | 'completed';
+          status?: 'draft' | 'sent' | 'signed' | 'completed';
           content?: string | null;
           file_url?: string | null;
           created_at?: string;
           updated_at?: string;
+          is_template?: boolean; // New field
         };
       };
       recipients: {
@@ -112,6 +134,8 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   file,
   templateContent,
   templateName,
+  documentId,
+  isTemplateUpload = false,
   onClose,
   onSave,
 }) => {
@@ -119,14 +143,13 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [signatureFields, setSignatureFields] = useState<SignatureField[]>([]);
-  const [selectedTool, setSelectedTool] = useState<'signature' | 'text' | 'date' | 'select'>('select');
+  const [selectedTool, setSelectedTool] = useState<'signature' | 'text' | 'date' | 'name' | 'email' | 'phone' | 'custom' | 'select'>('select');
   const [selectedField, setSelectedField] = useState<string | null>(null);
   const [isAddingField, setIsAddingField] = useState(false);
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [showSendModal, setShowSendModal] = useState(false);
   const [fileUrl, setFileUrl] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [newRecipient, setNewRecipient] = useState({ email: '', name: '', role: 'Signer' });
   const [documentLoaded, setDocumentLoaded] = useState(false);
@@ -135,11 +158,52 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   const [emailMessage, setEmailMessage] = useState('');
   const [sendingStep, setSendingStep] = useState<'compose' | 'sending' | 'sent'>('compose');
   const [loading, setLoading] = useState(false);
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [fieldLabel, setFieldLabel] = useState('');
+  const [saveAsTemplate, setSaveAsTemplate] = useState(isTemplateUpload); // New state for saving as template
 
   const pageRef = useRef<HTMLDivElement>(null);
   const signatureCanvasRef = useRef<SignatureCanvas>(null);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const originalPositionRef = useRef({ x: 0, y: 0 });
 
+  // Load template data if documentId is provided
   useEffect(() => {
+    const loadTemplateData = async () => {
+      if (documentId && user) {
+        try {
+          const template = await DocumentService.getDocument(documentId);
+          if (template && template.is_template) {
+            setFileUrl(template.file_url || '');
+            setIsTemplate(false);
+            const fields = await DocumentService.getSignatureFields(documentId);
+            setSignatureFields(
+              fields.map((field) => ({
+                id: field.id,
+                x: field.x_position,
+                y: field.y_position,
+                width: field.width,
+                height: field.height,
+                page: field.page_number,
+                type: field.field_type,
+                label: field.label,
+                required: field.required,
+                assignedTo: field.assigned_to,
+                defaultValue: field.defaultValue,
+              }))
+            );
+            setDocumentLoaded(true);
+            setNumPages(1); // Will be updated by onDocumentLoadSuccess
+          } else {
+            setDocumentError('Template not found or not accessible');
+          }
+        } catch (error) {
+          console.error('Error loading template:', error);
+          setDocumentError('Failed to load template');
+        }
+      }
+    };
+
     if (file) {
       const url = URL.createObjectURL(file);
       setFileUrl(url);
@@ -152,10 +216,12 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
       setDocumentLoaded(true);
       setNumPages(1);
       setDocumentError(null);
+    } else if (documentId) {
+      loadTemplateData();
     } else {
       setDocumentError('No document or template provided');
     }
-  }, [file, templateContent]);
+  }, [file, templateContent, documentId, user]);
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
@@ -176,6 +242,16 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
 
+    const defaultLabels = {
+      signature: 'Signature',
+      text: 'Text Field',
+      date: 'Date',
+      name: 'Full Name',
+      email: 'Email Address',
+      phone: 'Phone Number',
+      custom: 'Custom Field',
+    };
+
     const newField: SignatureField = {
       id: uuidv4(),
       x: Math.max(0, x - 50),
@@ -184,7 +260,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
       height: 30,
       page: currentPage,
       type: selectedTool,
-      label: `${selectedTool.charAt(0).toUpperCase() + selectedTool.slice(1)} Field`,
+      label: defaultLabels[selectedTool],
       required: true,
       assignedTo: null,
       defaultValue: '',
@@ -192,34 +268,46 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
 
     setSignatureFields((prev) => [...prev, newField]);
     setIsAddingField(false);
+
+    if (selectedTool === 'custom') {
+      setEditingField(newField.id);
+      setFieldLabel(newField.label);
+    }
   };
 
   const handleFieldMouseDown = (event: React.MouseEvent, fieldId: string) => {
     event.stopPropagation();
     setSelectedField(fieldId);
     setIsDragging(true);
+
     const field = signatureFields.find((f) => f.id === fieldId);
     if (field) {
-      const rect = event.currentTarget.getBoundingClientRect();
-      setDragOffset({
-        x: event.clientX - rect.left - field.x,
-        y: event.clientY - rect.top - field.y,
-      });
+      dragStartRef.current = { x: event.clientX, y: event.clientY };
+      originalPositionRef.current = { x: field.x, y: field.y };
     }
   };
 
   const handleMouseMove = (event: React.MouseEvent) => {
     if (!isDragging || !selectedField || !pageRef.current) return;
 
-    const pageRect = pageRef.current.getBoundingClientRect();
-    const newX = event.clientX - pageRect.left - dragOffset.x;
-    const newY = event.clientY - pageRect.top - dragOffset.y;
+    const deltaX = event.clientX - dragStartRef.current.x;
+    const deltaY = event.clientY - dragStartRef.current.y;
+
+    const container = pageRef.current;
+    const field = signatureFields.find((f) => f.id === selectedField);
+    if (!field) return;
+
+    let newX = originalPositionRef.current.x + deltaX;
+    let newY = originalPositionRef.current.y + deltaY;
+
+    const maxX = container.clientWidth - field.width;
+    const maxY = container.clientHeight - field.height;
+    newX = Math.max(0, Math.min(maxX, newX));
+    newY = Math.max(0, Math.min(maxY, newY));
 
     setSignatureFields((prev) =>
-      prev.map((field) =>
-        field.id === selectedField
-          ? { ...field, x: Math.max(0, newX), y: Math.max(0, newY) }
-          : field
+      prev.map((f) =>
+        f.id === selectedField ? { ...f, x: newX, y: newY } : f
       )
     );
   };
@@ -231,6 +319,22 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   const handleFieldDelete = (fieldId: string) => {
     setSignatureFields((prev) => prev.filter((field) => field.id !== fieldId));
     setSelectedField(null);
+    setEditingField(null);
+  };
+
+  const updateFieldLabel = (fieldId: string, newLabel: string) => {
+    setSignatureFields((prev) =>
+      prev.map((field) =>
+        field.id === fieldId ? { ...field, label: newLabel } : field
+      )
+    );
+  };
+
+  const saveFieldLabel = () => {
+    if (editingField) {
+      updateFieldLabel(editingField, fieldLabel);
+      setEditingField(null);
+    }
   };
 
   const saveSignature = async () => {
@@ -246,7 +350,6 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         user_agent: navigator.userAgent,
         location: 'Unknown',
       });
-      console.log('Signature saved:', signatureData);
       setShowSignatureModal(false);
     } catch (error) {
       console.error('Error saving signature:', error);
@@ -261,14 +364,22 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   };
 
   const handleSave = async () => {
-    if (!user || !file) {
+    if (!user || (!file && !fileUrl)) {
       alert('You must be logged in and have a file to save the document.');
       return;
     }
 
     try {
-      const originalPdfBytes = await fetch(fileUrl).then((res) => res.arrayBuffer());
-      const pdfDoc = await PDFDocument.load(originalPdfBytes);
+      let pdfBytes;
+      if (fileUrl) {
+        pdfBytes = await fetch(fileUrl).then((res) => res.arrayBuffer());
+      } else if (file) {
+        pdfBytes = await fetch(URL.createObjectURL(file)).then((res) => res.arrayBuffer());
+      } else {
+        throw new Error('No document to save');
+      }
+
+      const pdfDoc = await PDFDocument.load(pdfBytes);
       const form = pdfDoc.getForm();
 
       for (const field of signatureFields) {
@@ -287,14 +398,15 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
       }
 
       const newPdfBytes = await pdfDoc.save();
-      const editedFile = new File([newPdfBytes], `${file.name || 'edited'}.pdf`, { type: 'application/pdf' });
+      const editedFile = new File([newPdfBytes], `${file?.name || 'edited'}.pdf`, { type: 'application/pdf' });
 
       const document = await DocumentService.createDocument({
         id: uuidv4(),
-        title: file.name || templateName || 'Untitled Document',
+        title: file?.name || templateName || 'Untitled Document',
         owner_id: user.id,
         status: 'draft',
         content: templateContent,
+        is_template: saveAsTemplate, // Set is_template based on checkbox
       });
       const documentId = document.id;
 
@@ -317,8 +429,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         await DocumentService.saveSignatureFields(fieldInserts);
       }
 
-      console.log('Document saved successfully:', { id: documentId, name: document.title, file_url: publicUrl });
-      onSave(signatureFields, { id: documentId, name: document.title, file_url: publicUrl });
+      onSave(signatureFields, { id: documentId, title: document.title, file_url: publicUrl });
     } catch (error) {
       console.error('Error saving document:', error);
       alert('Error saving document. Please try again.');
@@ -326,7 +437,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   };
 
   const handleSendDocument = async () => {
-    if (!file && !templateContent) {
+    if (!file && !templateContent && !fileUrl) {
       alert('No document or template content to send.');
       return;
     }
@@ -337,10 +448,8 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
 
     setLoading(true);
     setSendingStep('sending');
-    console.log('Starting document send process...');
 
     try {
-      console.log('Step 1: Creating document...');
       const documentData: Database['public']['Tables']['documents']['Insert'] = {
         id: uuidv4(),
         title: file?.name || templateName || 'Untitled Document',
@@ -348,12 +457,10 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         status: recipients.length > 0 ? 'sent' : 'draft',
         content: templateContent || null,
         created_at: new Date().toISOString(),
+        is_template: saveAsTemplate, // Set is_template
       };
 
       const document = await DocumentService.createDocument(documentData);
-      console.log('Document created successfully:', document);
-
-      console.log('Step 2: Logging document creation access...');
       await DocumentService.logAccess({
         document_id: document.id,
         recipient_id: null,
@@ -362,16 +469,12 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         user_agent: navigator.userAgent,
         location: 'unknown',
       });
-      console.log('Access logged successfully.');
 
-      let fileUrl: string | undefined;
+      let fileUrlToUse = fileUrl;
       if (file) {
-        console.log('Step 3: Processing and uploading PDF...');
-        fileUrl = await DocumentService.uploadDocumentFile(document.id, file);
-        console.log('PDF uploaded successfully, file_url:', fileUrl);
+        fileUrlToUse = await DocumentService.uploadDocumentFile(document.id, file);
       }
 
-      console.log('Step 4: Saving signature fields...');
       const signatureFieldsData: SignatureFieldData[] = signatureFields.map((field) => ({
         id: field.id,
         document_id: document.id,
@@ -387,10 +490,8 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
       }));
 
       const savedFields = await DocumentService.saveSignatureFields(signatureFieldsData);
-      console.log('Signature fields saved:', savedFields);
 
       if (recipients.length > 0) {
-        console.log('Step 5: Adding recipients...');
         const recipientData: RecipientData[] = recipients.map((recipient) => ({
           id: uuidv4(),
           document_id: document.id,
@@ -404,9 +505,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         }));
 
         const addedRecipients = await DocumentService.addRecipients(recipientData);
-        console.log('Recipients added:', addedRecipients);
 
-        console.log('Step 6: Sending emails to recipients...');
         const recipientsToSend = addedRecipients.map((recipient) => ({
           email: recipient.email,
           signingUrl: `${window.location.origin}/sign/${document.id}/${recipient.signing_url_token}`,
@@ -445,12 +544,9 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
             location: 'unknown',
           });
         }
-        console.log('Emails sent and logged.');
       }
 
-      console.log('Step 7: Notifying parent component...');
-      onSave(savedFields, { ...document, file_url: fileUrl });
-      console.log('Document send process completed.');
+      onSave(savedFields, { ...document, file_url: fileUrlToUse });
       setSendingStep('sent');
     } catch (error: any) {
       console.error('HandleSendDocument failed:', error);
@@ -536,15 +632,39 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
               </button>
               <button
                 onClick={() => {
-                  setSelectedTool('text');
+                  setSelectedTool('name');
                   setIsAddingField(true);
                 }}
                 className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${
-                  selectedTool === 'text' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-200'
+                  selectedTool === 'name' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-200'
                 }`}
               >
-                <Type className="w-4 h-4" />
-                <span>Text Field</span>
+                <User className="w-4 h-4" />
+                <span>Name Field</span>
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedTool('email');
+                  setIsAddingField(true);
+                }}
+                className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${
+                  selectedTool === 'email' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-200'
+                }`}
+              >
+                <AtSign className="w-4 h-4" />
+                <span>Email Field</span>
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedTool('phone');
+                  setIsAddingField(true);
+                }}
+                className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${
+                  selectedTool === 'phone' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-200'
+                }`}
+              >
+                <Phone className="w-4 h-4" />
+                <span>Phone Field</span>
               </button>
               <button
                 onClick={() => {
@@ -555,8 +675,20 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   selectedTool === 'date' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-200'
                 }`}
               >
-                <Plus className="w-4 h-4" />
+                <Calendar className="w-4 h-4" />
                 <span>Date Field</span>
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedTool('custom');
+                  setIsAddingField(true);
+                }}
+                className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${
+                  selectedTool === 'custom' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-200'
+                }`}
+              >
+                <Type className="w-4 h-4" />
+                <span>Custom Field</span>
               </button>
             </div>
             {isAddingField && (
@@ -565,6 +697,43 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
               </div>
             )}
           </div>
+
+          {/* Field properties editor */}
+          {selectedField && (
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-900 mb-3">Field Properties</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Field Label
+                  </label>
+                  <input
+                    type="text"
+                    value={signatureFields.find((f) => f.id === selectedField)?.label || ''}
+                    onChange={(e) => updateFieldLabel(selectedField, e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={signatureFields.find((f) => f.id === selectedField)?.required || false}
+                      onChange={(e) => {
+                        setSignatureFields((prev) =>
+                          prev.map((field) =>
+                            field.id === selectedField ? { ...field, required: e.target.checked } : field
+                          )
+                        );
+                      }}
+                      className="rounded text-blue-600"
+                    />
+                    <span className="ml-2 text-sm text-gray-700">Required Field</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Fields list */}
           <div className="flex-1 p-6 overflow-y-auto">
@@ -603,6 +772,18 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
           {/* Action buttons */}
           <div className="p-6 border-t border-gray-200">
             <div className="space-y-3">
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="saveAsTemplate"
+                  checked={saveAsTemplate}
+                  onChange={() => setSaveAsTemplate(!saveAsTemplate)}
+                  className="form-checkbox h-5 w-5 text-blue-600"
+                />
+                <label htmlFor="saveAsTemplate" className="text-sm text-gray-700">
+                  Save as Template
+                </label>
+              </div>
               <button
                 onClick={() => setShowSignatureModal(true)}
                 className="w-full bg-gray-600 text-white py-2 px-4 rounded-lg hover:bg-gray-700 transition-colors"
@@ -656,8 +837,8 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                 {selectedTool === 'select'
                   ? 'Select and drag fields to move them'
                   : isAddingField
-                    ? `Click to place ${selectedTool} field`
-                    : ''}
+                  ? `Click to place ${selectedTool} field`
+                  : ''}
               </div>
             </div>
           )}
@@ -671,7 +852,8 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                 onClick={handlePageClick}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
-                style={{ cursor: isAddingField ? 'crosshair' : 'default' }}
+                onMouseLeave={handleMouseUp}
+                style={{ cursor: isAddingField ? 'crosshair' : isDragging ? 'grabbing' : 'default' }}
               >
                 {documentError ? (
                   <div className="flex items-center justify-center h-96 text-red-600 p-8">
@@ -686,7 +868,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                     className="min-h-[800px] p-8"
                     dangerouslySetInnerHTML={{ __html: templateContent || '' }}
                   />
-                ) : file && fileUrl ? (
+                ) : fileUrl ? (
                   <Document
                     file={fileUrl}
                     onLoadSuccess={onDocumentLoadSuccess}
@@ -728,304 +910,239 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
                   currentPageFields.map((field) => (
                     <div
                       key={field.id}
-                      onMouseDown={(e) => handleFieldMouseDown(e, field.id)}
-                      className={`absolute border-2 border-dashed cursor-move flex items-center justify-center text-xs font-medium select-none ${
-                        selectedField === field.id
-                          ? 'border-blue-500 bg-blue-100 text-blue-700'
-                          : 'border-gray-400 bg-gray-100 text-gray-600'
-                      }`}
+                      className={`absolute border-2 rounded cursor-move flex items-center justify-center text-center text-xs font-medium ${
+                        selectedField === field.id ? 'border-blue-500 bg-blue-100/50' : 'border-gray-400 bg-gray-100/50'
+                      } ${field.required ? 'border-dashed' : 'border-solid'}`}
                       style={{
                         left: field.x,
                         top: field.y,
                         width: field.width,
                         height: field.height,
                       }}
+                      onMouseDown={(e) => handleFieldMouseDown(e, field.id)}
                     >
-                      {field.type === 'signature' && 'Signature'}
-                      {field.type === 'text' && 'Text'}
-                      {field.type === 'date' && 'Date'}
+                      <span className="text-gray-700">{field.label}</span>
+                      {field.type === 'signature' && (
+                        <Edit3 className="absolute top-1 right-1 w-4 h-4 text-gray-500" />
+                      )}
+                      {field.type === 'date' && (
+                        <Calendar className="absolute top-1 right-1 w-4 h-4 text-gray-500" />
+                      )}
+                      {field.type === 'name' && (
+                        <User className="absolute top-1 right-1 w-4 h-4 text-gray-500" />
+                      )}
+                      {field.type === 'email' && (
+                        <AtSign className="absolute top-1 right-1 w-4 h-4 text-gray-500" />
+                      )}
+                      {field.type === 'phone' && (
+                        <Phone className="absolute top-1 right-1 w-4 h-4 text-gray-500" />
+                      )}
+                      {field.type === 'custom' && (
+                        <Type className="absolute top-1 right-1 w-4 h-4 text-gray-500" />
+                      )}
                     </div>
                   ))}
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Signature modal */}
-      {showSignatureModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4">
-            <div className="p-6 border-b border-gray-200">
-              <h3 className="text-xl font-bold text-gray-900">Create Your Signature</h3>
-            </div>
-            <div className="p-6">
-              <div className="border border-gray-300 rounded-lg">
-                <SignatureCanvas
-                  ref={signatureCanvasRef}
-                  canvasProps={{
-                    width: 600,
-                    height: 200,
-                    className: 'signature-canvas w-full',
-                  }}
-                />
-              </div>
-              <div className="flex justify-between mt-4">
+        {/* Signature modal */}
+        {showSignatureModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 w-full max-w-md">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">Create Signature</h3>
                 <button
-                  onClick={clearSignature}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
-                  Clear
-                </button>
-                <div className="space-x-3">
-                  <button
-                    onClick={() => setShowSignatureModal(false)}
-                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={saveSignature}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                  >
-                    Save Signature
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Send modal */}
-      {showSendModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 max-h-[90vh] overflow-hidden">
-            <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-6 text-white">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
-                    <Send className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-bold">Send for Signature</h3>
-                    <p className="text-blue-100 text-sm">Share your document with recipients</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setShowSendModal(false)}
-                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                  onClick={() => setShowSignatureModal(false)}
+                  className="p-2 hover:bg-gray-200 rounded-lg"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
+              <SignatureCanvas
+                ref={signatureCanvasRef}
+                canvasProps={{
+                  className: 'border border-gray-300 rounded-lg w-full h-48',
+                }}
+              />
+              <div className="flex justify-between mt-4">
+                <button
+                  onClick={clearSignature}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={saveSignature}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  Save Signature
+                </button>
+              </div>
             </div>
+          </div>
+        )}
 
-            {sendingStep === 'compose' && (
-              <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-                <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-xl mb-6 border border-blue-200">
-                  <div className="flex items-start space-x-4">
-                    <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center">
-                      <FileText className="w-6 h-6 text-white" />
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-semibold text-gray-900 mb-1">{file?.name || templateName}</h4>
-                      <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">
-                        <div className="flex items-center space-x-2">
-                          <Edit3 className="w-4 h-4" />
-                          <span>{signatureFields.length} signature fields</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Users className="w-4 h-4" />
-                          <span>{recipients.length} recipients</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Calendar className="w-4 h-4" />
-                          <span>Created {new Date().toLocaleDateString()}</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>{isTemplate ? 'Template' : 'Uploaded Document'}</span>
-                        </div>
-                      </div>
-                    </div>
+        {/* Send document modal */}
+        {showSendModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 w-full max-w-md">
+              {sendingStep === 'compose' && (
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold">Send Document</h3>
+                    <button
+                      onClick={() => setShowSendModal(false)}
+                      className="p-2 hover:bg-gray-200 rounded-lg"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
                   </div>
-                </div>
-
-                <div className="mb-6">
-                  <div className="flex items-center space-x-2 mb-4">
-                    <UserPlus className="w-5 h-5 text-blue-600" />
-                    <h4 className="font-semibold text-gray-900">Add Recipients</h4>
-                  </div>
-                  <div className="bg-gray-50 p-4 rounded-xl">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                      <input
-                        type="text"
-                        placeholder="Full Name"
-                        value={newRecipient.name}
-                        onChange={(e) => setNewRecipient((prev) => ({ ...prev, name: e.target.value }))}
-                        className="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                      <input
-                        type="email"
-                        placeholder="Email Address"
-                        value={newRecipient.email}
-                        onChange={(e) => setNewRecipient((prev) => ({ ...prev, email: e.target.value }))}
-                        className="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                      <div className="flex space-x-2">
-                        <select
-                          value={newRecipient.role}
-                          onChange={(e) => setNewRecipient((prev) => ({ ...prev, role: e.target.value }))}
-                          className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        >
-                          <option value="Signer">Signer</option>
-                          <option value="Reviewer">Reviewer</option>
-                          <option value="CC">CC</option>
-                        </select>
-                        <button
-                          onClick={addRecipient}
-                          disabled={!newRecipient.email || !newRecipient.name}
-                          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                          Add
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {recipients.length > 0 && (
-                  <div className="mb-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="font-semibold text-gray-900">Recipients ({recipients.length})</h4>
-                      <span className="text-sm text-gray-500">All recipients will receive signing invitations</span>
-                    </div>
-                    <div className="space-y-3">
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900 mb-2">Recipients</h4>
                       {recipients.map((recipient) => (
                         <div
                           key={recipient.id}
-                          className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-xl hover:shadow-sm transition-shadow"
+                          className="flex items-center justify-between p-3 border border-gray-200 rounded-lg"
                         >
-                          <div className="flex items-center space-x-3">
-                            <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-medium">
-                              {recipient.name.charAt(0).toUpperCase()}
-                            </div>
-                            <div>
-                              <p className="font-medium text-gray-900">{recipient.name}</p>
-                              <p className="text-sm text-gray-600">{recipient.email}</p>
-                            </div>
+                          <div>
+                            <p className="text-sm font-medium">{recipient.name}</p>
+                            <p className="text-xs text-gray-500">{recipient.email} ({recipient.role})</p>
                           </div>
-                          <div className="flex items-center space-x-3">
-                            <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full font-medium">
-                              {recipient.role}
-                            </span>
-                            <button
-                              onClick={() => removeRecipient(recipient.id)}
-                              className="p-2 text-gray-400 hover:text-red-600 transition-colors rounded-lg hover:bg-red-50"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
+                          <button
+                            onClick={() => removeRecipient(recipient.id)}
+                            className="p-1 text-gray-400 hover:text-red-600"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
                         </div>
                       ))}
+                      <div className="mt-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Name</label>
+                            <input
+                              type="text"
+                              value={newRecipient.name}
+                              onChange={(e) => setNewRecipient({ ...newRecipient, name: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              placeholder="Enter name"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Email</label>
+                            <input
+                              type="email"
+                              value={newRecipient.email}
+                              onChange={(e) => setNewRecipient({ ...newRecipient, email: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              placeholder="Enter email"
+                            />
+                          </div>
+                        </div>
+                        <div className="mt-4">
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Role</label>
+                          <select
+                            value={newRecipient.role}
+                            onChange={(e) => setNewRecipient({ ...newRecipient, role: e.target.value })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          >
+                            <option value="Signer">Signer</option>
+                            <option value="Viewer">Viewer</option>
+                            <option value="Approver">Approver</option>
+                          </select>
+                        </div>
+                        <button
+                          onClick={addRecipient}
+                          className="mt-4 w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 flex items-center justify-center space-x-2"
+                        >
+                          <UserPlus className="w-4 h-4" />
+                          <span>Add Recipient</span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
-
-                <div className="mb-6">
-                  <div className="flex items-center space-x-2 mb-4">
-                    <Mail className="w-5 h-5 text-blue-600" />
-                    <h4 className="font-semibold text-gray-900">Personal Message</h4>
-                    <span className="text-sm text-gray-500">(Optional)</span>
-                  </div>
-                  <textarea
-                    placeholder="Add a personal message for your recipients..."
-                    value={emailMessage}
-                    onChange={(e) => setEmailMessage(e.target.value)}
-                    rows={4}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                  />
-                </div>
-
-                {recipients.length === 0 && (
-                  <div className="flex items-center space-x-3 p-4 bg-amber-50 border border-amber-200 rounded-xl mb-6">
-                    <AlertCircle className="w-5 h-5 text-amber-600" />
-                    <p className="text-amber-800 text-sm">Please add at least one recipient to send the document.</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {sendingStep === 'sending' && (
-              <div className="p-12 text-center">
-                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                </div>
-                <h4 className="text-xl font-semibold text-gray-900 mb-2">Sending Document</h4>
-                <p className="text-gray-600">Preparing emails and generating secure signing links...</p>
-              </div>
-            )}
-
-            {sendingStep === 'sent' && (
-              <div className="p-12 text-center">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <CheckCircle2 className="w-8 h-8 text-green-600" />
-                </div>
-                <h4 className="text-xl font-semibold text-gray-900 mb-2">Document Sent Successfully!</h4>
-                <p className="text-gray-600">All recipients have been notified and can now sign the document.</p>
-                <button
-                  onClick={() => {
-                    setShowSendModal(false);
-                    setSendingStep('compose');
-                  }}
-                  className="mt-6 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Close
-                </button>
-              </div>
-            )}
-
-            {sendingStep === 'compose' && (
-              <div className="p-6 border-t border-gray-200 bg-gray-50">
-                <div className="flex justify-between items-center">
-                  <div className="text-sm text-gray-600">
-                    {recipients.length > 0 ? (
-                      <span className="flex items-center space-x-1">
-                        <CheckCircle2 className="w-4 h-4 text-green-600" />
-                        <span>
-                          Ready to send to {recipients.length} recipient{recipients.length !== 1 ? 's' : ''}
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="flex items-center space-x-1">
-                        <AlertCircle className="w-4 h-4 text-amber-600" />
-                        <span>Add recipients to continue</span>
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex space-x-3">
-                    <button
-                      onClick={() => setShowSendModal(false)}
-                      className="px-6 py-3 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                      Cancel
-                    </button>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Message (Optional)</label>
+                      <textarea
+                        value={emailMessage}
+                        onChange={(e) => setEmailMessage(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                        rows={4}
+                        placeholder="Add a message to the recipients"
+                      />
+                    </div>
                     <button
                       onClick={handleSendDocument}
                       disabled={recipients.length === 0 || loading}
-                      className="px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 flex items-center space-x-2 font-medium"
+                      className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 flex items-center justify-center space-x-2 disabled:opacity-50"
                     >
                       <Send className="w-4 h-4" />
                       <span>Send Document</span>
                     </button>
                   </div>
+                </>
+              )}
+              {sendingStep === 'sending' && (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                  <p className="text-gray-600">Sending document...</p>
                 </div>
-              </div>
-            )}
+              )}
+              {sendingStep === 'sent' && (
+                <div className="text-center py-8">
+                  <CheckCircle2 className="w-16 h-16 text-green-600 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">Document Sent!</h3>
+                  <p className="text-gray-600 mb-4">Your document has been sent to all recipients.</p>
+                  <button
+                    onClick={() => {
+                      setShowSendModal(false);
+                      setSendingStep('compose');
+                      setRecipients([]);
+                      setEmailMessage('');
+                      onClose();
+                    }}
+                    className="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700"
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Custom field label modal */}
+        {editingField && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 w-full max-w-sm">
+              <h3 className="text-lg font-semibold mb-4">Edit Field Label</h3>
+              <input
+                type="text"
+                value={fieldLabel}
+                onChange={(e) => setFieldLabel(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4"
+                placeholder="Enter field label"
+              />
+              <div className="flex justify-between">
+                <button
+                  onClick={() => setEditingField(null)}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveFieldLabel}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
