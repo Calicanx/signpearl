@@ -91,8 +91,8 @@ interface DocumentEditorProps {
   file?: File;
   templateContent?: string;
   templateName?: string;
-  documentId?: string; // New prop for loading templates
-  isTemplateUpload?: boolean; // New prop to indicate template upload
+  documentId?: string;
+  isTemplateUpload?: boolean;
   onClose: () => void;
   onSave: (fields: SignatureField[], documentData?: any) => void;
 }
@@ -110,7 +110,7 @@ interface Database {
           file_url?: string | null;
           created_at?: string;
           updated_at?: string;
-          is_template?: boolean; // New field
+          is_template?: boolean;
         };
       };
       recipients: {
@@ -160,14 +160,13 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   const [loading, setLoading] = useState(false);
   const [editingField, setEditingField] = useState<string | null>(null);
   const [fieldLabel, setFieldLabel] = useState('');
-  const [saveAsTemplate, setSaveAsTemplate] = useState(isTemplateUpload); // New state for saving as template
+  const [saveAsTemplate, setSaveAsTemplate] = useState(isTemplateUpload);
 
   const pageRef = useRef<HTMLDivElement>(null);
   const signatureCanvasRef = useRef<SignatureCanvas>(null);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const originalPositionRef = useRef({ x: 0, y: 0 });
 
-  // Load template data if documentId is provided
   useEffect(() => {
     const loadTemplateData = async () => {
       if (documentId && user) {
@@ -193,7 +192,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
               }))
             );
             setDocumentLoaded(true);
-            setNumPages(1); // Will be updated by onDocumentLoadSuccess
+            setNumPages(1);
           } else {
             setDocumentError('Template not found or not accessible');
           }
@@ -406,7 +405,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         owner_id: user.id,
         status: 'draft',
         content: templateContent,
-        is_template: saveAsTemplate, // Set is_template based on checkbox
+        is_template: saveAsTemplate,
       });
       const documentId = document.id;
 
@@ -457,7 +456,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
         status: recipients.length > 0 ? 'sent' : 'draft',
         content: templateContent || null,
         created_at: new Date().toISOString(),
-        is_template: saveAsTemplate, // Set is_template
+        is_template: saveAsTemplate,
       };
 
       const document = await DocumentService.createDocument(documentData);
@@ -582,8 +581,8 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl mx-4 max-h-[95vh] overflow-hidden flex">
-        {/* Left sidebar */}
-        <div className="w-80 bg-gray-50 border-r border-gray-200 flex flex-col">
+        {/* Left sidebar - Made scrollable with overflow-y-auto */}
+        <div className="w-80 bg-gray-50 border-r border-gray-200 flex flex-col overflow-y-auto">
           <div className="p-6 border-b border-gray-200">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900">Document Editor</h2>
